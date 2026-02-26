@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  preflight:
+    name: Preflight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Format check
+        run: pnpm format:check
+
+      - name: Type check
+        run: pnpm typecheck
+
+      - name: Test with coverage
+        run: pnpm test:coverage
+
+      - name: Audit dependencies
+        run: pnpm audit --prod --audit-level=high
+
+  banned-patterns:
+    name: Banned Pattern Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for banned child_process patterns
+        run: |
+          echo "Checking for banned patterns in source code..."
+          FOUND=0
+
+          # Check for exec, execSync, execFile, execFileSync
+          if grep -rn --include='*.ts' \
+            -e 'child_process.*exec[^u]' \
+            -e "from ['\"]node:child_process['\"].*exec" \
+            -e 'execSync' \
+            -e 'execFile' \
+            -e 'execFileSync' \
+            src/; then
+            echo "ERROR: Found banned child_process imports (exec/execSync/execFile/execFileSync)"
+            FOUND=1
+          fi
+
+          # Check for shell: true
+          if grep -rn --include='*.ts' 'shell:\s*true' src/; then
+            echo "ERROR: Found shell: true in spawn options"
+            FOUND=1
+          fi
+
+          if [ "$FOUND" -eq 1 ]; then
+            echo "Banned patterns detected. See SECURITY_MODEL.md §3.2"
+            exit 1
+          fi
+
+          echo "No banned patterns found."

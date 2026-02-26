@@ -18,7 +18,9 @@
         packages = with pkgs; [
           nodejs_22
           pnpm
+          typescript
           oxlint
+          nodePackages.prettier
           gh
         ];
         shellHook = ''

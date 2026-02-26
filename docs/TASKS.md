@@ -65,6 +65,7 @@ all 8 header combinations from §3.2.
 
 | # | Task | Owner | Spec Ref |
 |---|------|-------|----------|
+| 2.0 | Establish config injection pattern — `app.decorate("config", config)` with `FastifyInstance` declaration merging for type-safe config access in all routes and services. Deferred from Epic 1 per architect review (P1-4): premature when only the health stub existed, needed now that services consume config | `ARCH` | §2.2 |
 | 2.1 | Create `src/backends/types.ts` — `CompletionBackend` (with `healthCheck(): Promise<HealthStatus>` method), `BackendResult`, `BackendStreamCallbacks` (with `onDone: (metadata: { headers: Record<string, string>; usage?: ChatCompletionUsage }) => void`), `RequestContext` (with `apiKey?: string` for rate limiting) | `ARCH` | §3.3, §12.1 |
 | 2.2 | Create `src/services/mode-router.ts` — header inspection, priority logic from §3.2 | `ENG` | §3.2 |
 | 2.3 | Test: no headers → `OPENAI_PASSTHROUGH` | `QA` | §14.4 #3 |
@@ -333,7 +334,7 @@ triggering clean shutdown with active requests.
 | 9.3 | Implement per-request timeout — `REQUEST_TIMEOUT_MS`, SIGTERM then SIGKILL after 5s. Cancel SIGKILL timer if process exits after SIGTERM; `unref()` after SIGKILL | `ENG` | §7.4 |
 | 9.4 | Track active processes in `Set<ChildProcess>`, clean up on exit/abort | `ENG` | §7.4 |
 | 9.5 | Implement stdout/stderr output buffering limits — 10 MB stdout, 1 MB stderr. Kill child if exceeded, return 502 | `ENG` | SECURITY §7.1, §7.3 |
-| 9.6 | Implement graceful shutdown — SIGTERM/SIGINT signal handlers + shutdown flag (refuse new requests with 503) | `ENG` | §7.5 |
+| 9.6 | Implement graceful shutdown — SIGTERM/SIGINT signal handlers + shutdown flag (refuse new requests with 503). Note: `index.ts` intentionally has no signal handlers until this task; adding a skeleton earlier would create false confidence without process pool drain logic (architect review P1-5) | `ENG` | §7.5 |
 | 9.7 | Implement shutdown drain — send SIGTERM to all children, wait `SHUTDOWN_TIMEOUT_MS`, then SIGKILL survivors | `ENG` | §7.5 |
 | 9.8 | Implement connection timeout configuration — `server.headersTimeout`, `server.requestTimeout`, `server.keepAliveTimeout` | `ENG` | SECURITY §12 |
 | 9.9 | Test: process pool exhaustion → 429 `capacity_exceeded` | `QA` | §14.4 #46 |
