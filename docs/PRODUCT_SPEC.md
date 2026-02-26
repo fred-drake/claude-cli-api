@@ -152,7 +152,7 @@ Both backends implement a common interface:
 
 ```typescript
 export interface CompletionBackend {
-  readonly name: "claude-code" | "openai-passthrough";
+  readonly name: BackendMode;
 
   complete(
     request: ChatCompletionRequest,
@@ -164,6 +164,8 @@ export interface CompletionBackend {
     context: RequestContext,
     callbacks: BackendStreamCallbacks
   ): Promise<void>;
+
+  healthCheck(): Promise<HealthStatus>;
 }
 
 export interface BackendResult {
@@ -172,8 +174,11 @@ export interface BackendResult {
 }
 
 export interface BackendStreamCallbacks {
-  onChunk: (chunk: string) => void;  // SSE-formatted string
-  onDone: (headers: Record<string, string>) => void;
+  onChunk: (chunk: string) => void;  // Raw JSON string; route handler wraps in SSE format
+  onDone: (metadata: {
+    headers: Record<string, string>;
+    usage?: ChatCompletionUsage;
+  }) => void;
   onError: (error: OpenAIError) => void;
 }
 
@@ -181,6 +186,7 @@ export interface RequestContext {
   requestId: string;
   sessionId?: string;         // Only for Claude Code mode
   clientOpenAIKey?: string;   // Client's OpenAI key override
+  apiKey?: string;            // For per-key rate limiting
   clientIp: string;
   method: string;
   path: string;
