@@ -1,7 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { RequestContext } from "../../src/backends/types.js";
 import { ClaudeCodeBackend } from "../../src/backends/claude-code.js";
 import type { ClaudeCodeOptions } from "../../src/backends/claude-code.js";
+import { SessionManager } from "../../src/services/session-manager.js";
 import {
   sampleNdjsonStream,
   sampleStreamRequest,
@@ -17,6 +18,14 @@ function defaultOptions(): ClaudeCodeOptions {
   return { cliPath: "/usr/bin/claude", enabled: true };
 }
 
+function defaultSessionManager(): SessionManager {
+  return new SessionManager({
+    sessionTtlMs: 3_600_000,
+    maxSessionAgeMs: 86_400_000,
+    cleanupIntervalMs: 60_000,
+  });
+}
+
 function defaultContext(
   overrides: Partial<RequestContext> = {},
 ): RequestContext {
@@ -25,13 +34,21 @@ function defaultContext(
     clientIp: "127.0.0.1",
     method: "POST",
     path: "/v1/chat/completions",
+    apiKey: "test-key",
     ...overrides,
   };
 }
 
 describe("client disconnect → SIGTERM", () => {
+  let sessionManager: SessionManager;
+
   beforeEach(() => {
     vi.clearAllMocks();
+    sessionManager = defaultSessionManager();
+  });
+
+  afterEach(() => {
+    sessionManager?.destroy();
   });
 
   it("abort signal kills the child process with SIGTERM", async () => {
@@ -42,7 +59,7 @@ describe("client disconnect → SIGTERM", () => {
     mockSpawn.mockReturnValueOnce(child as never);
 
     const controller = new AbortController();
-    const backend = new ClaudeCodeBackend(defaultOptions());
+    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
     const { callbacks } = collectCallbacks();
 
     const streamPromise = backend.completeStream(
@@ -67,7 +84,7 @@ describe("client disconnect → SIGTERM", () => {
     mockSpawn.mockReturnValueOnce(child as never);
 
     const controller = new AbortController();
-    const backend = new ClaudeCodeBackend(defaultOptions());
+    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
     const { callbacks } = collectCallbacks();
 
     // Wait for stream to complete normally
@@ -97,7 +114,7 @@ describe("client disconnect → SIGTERM", () => {
       "removeEventListener",
     );
 
-    const backend = new ClaudeCodeBackend(defaultOptions());
+    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
     const { callbacks } = collectCallbacks();
 
     await backend.completeStream(
@@ -119,7 +136,7 @@ describe("client disconnect → SIGTERM", () => {
     const child = createStreamingMockChildProcess(sampleNdjsonStream);
     mockSpawn.mockReturnValueOnce(child as never);
 
-    const backend = new ClaudeCodeBackend(defaultOptions());
+    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
     const { callbacks, getDoneMetadata } = collectCallbacks();
 
     await backend.completeStream(
