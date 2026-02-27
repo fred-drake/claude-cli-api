@@ -19,6 +19,7 @@
           nodejs_22
           pnpm
           typescript
+          typescript-language-server
           oxlint
           nodePackages.prettier
           gh
