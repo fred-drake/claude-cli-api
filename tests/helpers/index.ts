@@ -12,6 +12,7 @@ export {
 } from "./openai-stream.js";
 export { injectRequest, expectOpenAIError } from "./fastify.js";
 export { useFakeTimers, advanceTimersByMs, runAllTimers } from "./timers.js";
+export { collectCallbacks } from "./callbacks.js";
 export {
   sampleCliResult,
   sampleCliErrorResult,
@@ -20,6 +21,8 @@ export {
   sampleCliAuthFailureStderr,
   sampleCliTimeoutStderr,
   sampleNdjsonStream,
+  sampleMultiBlockNdjsonStream,
+  sampleMaxTokensNdjsonStream,
   sampleOpenAIResponse,
   sampleChatRequest,
   sampleStreamRequest,

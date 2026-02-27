@@ -67,4 +67,5 @@ export interface RequestContext {
   clientIp: string;
   method: string;
   path: string;
+  signal?: AbortSignal;
 }
