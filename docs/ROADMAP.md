@@ -1,6 +1,6 @@
 # Roadmap
 
-Last Updated: 2026-02-26 | Version: 0.2.0
+Last Updated: 2026-02-26 | Version: 0.3.0
 
 ## Completed Epics
 
@@ -24,6 +24,26 @@ Stream transformer pipeline for Claude CLI NDJSON output:
 - Client disconnect → `SIGTERM` child process cancellation
 - Mid-stream error handling with finish chunk + error callback
 
+### Epic 6: Session Management
+Session persistence with TTL/max-age eviction, periodic cleanup.
+- `SessionManager` with `resolve()`, `release()`, `destroy()`
+- `SessionError` class for session-related failures
+- `X-Claude-Session-ID` header handling for session resumption
+
+### Epic 7: HTTP Server & Route Integration
+Fastify HTTP server integrating all components:
+- `POST /v1/chat/completions` — streaming + non-streaming
+- `GET /v1/models` — static Claude model list
+- `GET /health` — backend health checks per §4.4 schema
+- Centralized error handler mapping all error types to
+  OpenAI-compatible JSON schema
+- CORS hooks (configurable origin allowlist)
+- Security headers (`nosniff`, `no-store`, `DENY`, CSP)
+- `X-Request-ID` generation/echo
+- SSE streaming with eager header write and `data: [DONE]`
+- AbortController for client disconnect detection
+- 1 MB body limit
+
 ## In Progress
 
 ### Epic 4: Claude Code Non-Streaming
@@ -32,23 +52,26 @@ transformer for non-streaming `complete()`.
 
 ## Planned
 
-### Epic 6: Session Management
-Session persistence, `X-Claude-Session-ID` header handling.
+### Epic 8: Auth Middleware
+API key validation, rate limiting.
 
-### Epic 7: Route Handler
-Fastify route for `POST /v1/chat/completions` with SSE
-formatting, error responses, and backend dispatch.
+### Epic 9: Process Pool
+Concurrency management, graceful shutdown.
 
 ## Architecture
 
 ```
-Client → Fastify Route → Mode Router → Backend
-                                         ├── OpenAI Passthrough
-                                         └── Claude Code
-                                              ├── Model Mapper
-                                              ├── Request Transformer
-                                              ├── CLI Spawner
-                                              └── Stream Transformer
-                                                   ├── NdjsonLineBuffer
-                                                   └── StreamAdapter
+Client → Fastify HTTP Server
+           ├── onRequest hooks (X-Request-ID, CORS)
+           ├── onSend hook (security headers)
+           ├── Route Handler
+           │     ├── Mode Router (header inspection)
+           │     ├── Backend Selection
+           │     │     ├── OpenAI Passthrough
+           │     │     └── Claude Code
+           │     │          ├── Session Manager
+           │     │          ├── CLI Spawner
+           │     │          └── Stream Transformer
+           │     └── Response (JSON or SSE)
+           └── Error Handler (OpenAI schema)
 ```

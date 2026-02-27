@@ -2,6 +2,44 @@
 
 Last Updated: 2026-02-26
 
+## v0.3.0 — Epics 6 & 7: Session Management + HTTP Server (2026-02-26)
+
+### Added
+- `src/errors/handler.ts` — Centralized error handler with:
+  - `ModeRouterError`, `ApiError` classes
+  - `mapErrorToResponse()`: maps all error types to OpenAI schema
+  - `registerErrorHandler()`: Fastify `setErrorHandler` integration
+  - Handles streaming errors (headersSent check for SSE)
+- `src/routes/chat-completions.ts` — POST /v1/chat/completions with:
+  - Mode-based backend dispatch (claude-code / openai-passthrough)
+  - SSE streaming with eager header write
+  - AbortController for client disconnect detection
+  - `data: [DONE]` termination, `reply.hijack()` for raw ownership
+- `src/routes/models.ts` — GET /v1/models (static Claude model list)
+- `tests/unit/error-handler.test.ts` — 19 tests covering all error paths
+- `tests/integration/chat-completions.test.ts` — 30 tests (routing,
+  streaming, CORS, request context, error handling)
+- `tests/integration/models.test.ts` — 8 tests (model list, headers)
+
+### Changed
+- `src/server.ts` — Major rewrite:
+  - Backend instantiation (OpenAIPassthroughBackend + ClaudeCodeBackend)
+  - Session manager lifecycle (decorate + onClose cleanup)
+  - CORS hooks (configurable origin allowlist, preflight handling)
+  - Security headers onSend hook (nosniff, no-store, DENY, CSP)
+  - X-Request-ID onRequest hook (echo or generate UUID)
+  - 1 MB body limit (§8.4)
+  - Centralized error handler registration
+- `src/routes/health.ts` — Rewritten for §4.4 schema:
+  - Real `healthCheck()` calls to both backends
+  - `version`, `checks` (claude_cli, anthropic_key,
+    openai_passthrough, capacity) response structure
+  - 200 if any backend ok, 503 if none
+- `src/types/fastify.d.ts` — Added `claudeCodeBackend` and
+  `openaiPassthroughBackend` to FastifyInstance declaration
+- `tests/integration/health.test.ts` — 11 tests (rewritten for §4.4)
+- `vitest.config.ts` — Exclude `.direnv/**` from test discovery
+
 ## v0.2.0 — Epic 5: Claude Code Streaming (2026-02-26)
 
 ### Added

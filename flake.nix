@@ -29,6 +29,23 @@
             echo "WARNING: 'claude' CLI not found on PATH"
             echo "Install: npm install -g @anthropic-ai/claude-code"
           fi
+
+          secret_file="$HOME/.config/sops-nix/secrets/llm-deepseek"
+          if [ -f "$secret_file" ]; then
+            export DEEPSEEK_KEY="$(cat "$secret_file")"
+          fi
+
+          secret_file="$HOME/.config/sops-nix/secrets/llm-openai"
+          if [ -f "$secret_file" ]; then
+            export OPENAI_KEY="$(cat "$secret_file")"
+          fi
+
+          secret_file="$HOME/.config/sops-nix/secrets/llm-anthropic"
+          if [ -f "$secret_file" ]; then
+            export ANTHROPIC_KEY="$(cat "$secret_file")"
+          fi
+
+          unset secret_file
         '';
       };
     });
