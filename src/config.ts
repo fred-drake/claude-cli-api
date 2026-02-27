@@ -23,6 +23,8 @@ export interface ServerConfig {
   poolQueueTimeoutMs: number;
   shutdownTimeoutMs: number;
   sessionTtlMs: number;
+  maxSessionAgeMs: number;
+  sessionCleanupIntervalMs: number;
 
   openaiApiKey: string;
   openaiBaseUrl: string;
@@ -147,6 +149,18 @@ export function loadConfig(): ServerConfig {
   const sessionTtlStr = process.env.SESSION_TTL_MS ?? "3600000";
   const sessionTtlMs = parseIntStrict(sessionTtlStr, "SESSION_TTL_MS");
 
+  const maxSessionAgeStr = process.env.MAX_SESSION_AGE_MS ?? "86400000";
+  const maxSessionAgeMs = parseIntStrict(
+    maxSessionAgeStr,
+    "MAX_SESSION_AGE_MS",
+  );
+
+  const sessionCleanupStr = process.env.SESSION_CLEANUP_INTERVAL_MS ?? "60000";
+  const sessionCleanupIntervalMs = parseIntStrict(
+    sessionCleanupStr,
+    "SESSION_CLEANUP_INTERVAL_MS",
+  );
+
   return {
     port,
     host: process.env.HOST ?? "127.0.0.1",
@@ -163,6 +177,8 @@ export function loadConfig(): ServerConfig {
     poolQueueTimeoutMs,
     shutdownTimeoutMs,
     sessionTtlMs,
+    maxSessionAgeMs,
+    sessionCleanupIntervalMs,
 
     openaiApiKey: process.env.OPENAI_API_KEY ?? "",
     openaiBaseUrl: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",

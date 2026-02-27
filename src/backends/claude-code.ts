@@ -9,6 +9,8 @@ import type {
   RequestContext,
 } from "./types.js";
 import { NdjsonLineBuffer, StreamAdapter } from "../transformers/stream.js";
+import type { SessionResult } from "../services/session-manager.js";
+import { SessionError, SessionManager } from "../services/session-manager.js";
 
 export interface ClaudeCodeOptions {
   cliPath: string;
@@ -18,9 +20,11 @@ export interface ClaudeCodeOptions {
 export class ClaudeCodeBackend implements CompletionBackend {
   readonly name: BackendMode = "claude-code";
   private readonly options: ClaudeCodeOptions;
+  private readonly sessionManager: SessionManager;
 
-  constructor(options: ClaudeCodeOptions) {
+  constructor(options: ClaudeCodeOptions, sessionManager: SessionManager) {
     this.options = options;
+    this.sessionManager = sessionManager;
   }
 
   async complete(
@@ -35,8 +39,67 @@ export class ClaudeCodeBackend implements CompletionBackend {
     context: RequestContext,
     callbacks: BackendStreamCallbacks,
   ): Promise<void> {
+    let sessionResult: SessionResult;
     try {
-      const args = this.buildCliArgs(request, context);
+      sessionResult = this.sessionManager.resolveSession(
+        context.sessionId,
+        context.apiKey ?? "__anonymous__",
+        request.model,
+      );
+    } catch (err) {
+      if (err instanceof SessionError) {
+        callbacks.onError(err.body);
+        return;
+      }
+      throw err;
+    }
+
+    this.sessionManager.acquireLock(sessionResult.sessionId);
+
+    const wrappedCallbacks: BackendStreamCallbacks = {
+      ...callbacks,
+      onDone: (metadata) => {
+        callbacks.onDone({
+          ...metadata,
+          headers: {
+            ...metadata.headers,
+            ...(sessionResult.action === "created"
+              ? { "X-Claude-Session-Created": "true" }
+              : {}),
+          },
+        });
+      },
+    };
+
+    try {
+      const resolvedContext = {
+        ...context,
+        sessionId: sessionResult.sessionId,
+      };
+      await this.doCompleteStream(
+        request,
+        resolvedContext,
+        wrappedCallbacks,
+        sessionResult,
+      );
+    } finally {
+      this.sessionManager.releaseLock(sessionResult.sessionId);
+    }
+  }
+
+  async healthCheck(): Promise<HealthStatus> {
+    if (!this.options.enabled) return { status: "disabled" };
+    return { status: "ok" };
+  }
+
+  private async doCompleteStream(
+    request: ChatCompletionRequest,
+    context: RequestContext,
+    callbacks: BackendStreamCallbacks,
+    session: SessionResult,
+  ): Promise<void> {
+    try {
+      const args = this.buildCliArgs(request, context, session);
 
       const child = spawn(this.options.cliPath, args, {
         stdio: ["pipe", "pipe", "pipe"],
@@ -136,19 +199,19 @@ export class ClaudeCodeBackend implements CompletionBackend {
     }
   }
 
-  async healthCheck(): Promise<HealthStatus> {
-    if (!this.options.enabled) return { status: "disabled" };
-    return { status: "ok" };
-  }
-
   private buildCliArgs(
     request: ChatCompletionRequest,
     context: RequestContext,
+    session?: SessionResult,
   ): string[] {
     const args: string[] = ["--output-format", "stream-json"];
 
-    if (context.sessionId) {
-      args.push("--resume", context.sessionId);
+    if (context.sessionId && session) {
+      if (session.action === "created") {
+        args.push("--session-id", context.sessionId);
+      } else {
+        args.push("--resume", context.sessionId);
+      }
     }
 
     const systemMessages = request.messages.filter((m) => m.role === "system");

@@ -22,6 +22,8 @@ describe("config", () => {
     delete process.env.POOL_QUEUE_TIMEOUT_MS;
     delete process.env.SHUTDOWN_TIMEOUT_MS;
     delete process.env.SESSION_TTL_MS;
+    delete process.env.MAX_SESSION_AGE_MS;
+    delete process.env.SESSION_CLEANUP_INTERVAL_MS;
     delete process.env.OPENAI_API_KEY;
     delete process.env.OPENAI_BASE_URL;
     delete process.env.OPENAI_PASSTHROUGH_ENABLED;
@@ -50,6 +52,8 @@ describe("config", () => {
       expect(config.poolQueueTimeoutMs).toBe(5_000);
       expect(config.shutdownTimeoutMs).toBe(10_000);
       expect(config.sessionTtlMs).toBe(3_600_000);
+      expect(config.maxSessionAgeMs).toBe(86_400_000);
+      expect(config.sessionCleanupIntervalMs).toBe(60_000);
       expect(config.openaiApiKey).toBe("");
       expect(config.openaiBaseUrl).toBe("https://api.openai.com/v1");
       expect(config.openaiPassthroughEnabled).toBe(true);
@@ -94,12 +98,16 @@ describe("config", () => {
       process.env.POOL_QUEUE_TIMEOUT_MS = "10000";
       process.env.SHUTDOWN_TIMEOUT_MS = "15000";
       process.env.SESSION_TTL_MS = "7200000";
+      process.env.MAX_SESSION_AGE_MS = "43200000";
+      process.env.SESSION_CLEANUP_INTERVAL_MS = "120000";
       const config = loadConfig();
       expect(config.requestTimeoutMs).toBe(60_000);
       expect(config.maxConcurrentProcesses).toBe(20);
       expect(config.poolQueueTimeoutMs).toBe(10_000);
       expect(config.shutdownTimeoutMs).toBe(15_000);
       expect(config.sessionTtlMs).toBe(7_200_000);
+      expect(config.maxSessionAgeMs).toBe(43_200_000);
+      expect(config.sessionCleanupIntervalMs).toBe(120_000);
     });
 
     it("reads boolean OPENAI_PASSTHROUGH_ENABLED=false", () => {
