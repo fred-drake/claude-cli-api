@@ -721,11 +721,16 @@ class OpenAIPassthroughBackend implements CompletionBackend {
       stream: true,
     });
     for await (const chunk of stream) {
-      callbacks.onChunk(`data: ${JSON.stringify(chunk)}\n\n`);
+      // onChunk receives raw JSON; the route handler (Epic 7) wraps
+      // each chunk in SSE format (data: ...\n\n).
+      callbacks.onChunk(JSON.stringify(chunk));
     }
     // SDK stream ends naturally — [DONE] is NOT piped through onChunk.
     // The route handler emits data: [DONE] after onDone().
-    callbacks.onDone({ "X-Backend-Mode": "openai-passthrough" });
+    callbacks.onDone({
+      headers: { "X-Backend-Mode": "openai-passthrough" },
+      usage: lastUsage,  // from final chunk, if stream_options.include_usage
+    });
   }
 }
 ```
@@ -1329,7 +1334,10 @@ export interface BackendResult {
 
 export interface BackendStreamCallbacks {
   onChunk: (chunk: string) => void;
-  onDone: (headers: Record<string, string>) => void;
+  onDone: (metadata: {
+    headers: Record<string, string>;
+    usage?: ChatCompletionUsage;
+  }) => void;
   onError: (error: OpenAIError) => void;
 }
 

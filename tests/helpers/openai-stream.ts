@@ -77,3 +77,17 @@ export function createTypicalStreamChunks(
     },
   ];
 }
+
+export function createErrorStream(
+  chunksBeforeError: ChatCompletionChunk[],
+  error: Error,
+): AsyncIterable<ChatCompletionChunk> {
+  return {
+    [Symbol.asyncIterator]: async function* () {
+      for (const chunk of chunksBeforeError) {
+        yield chunk;
+      }
+      throw error;
+    },
+  };
+}

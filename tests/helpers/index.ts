@@ -6,6 +6,7 @@ export {
 } from "./spawn.js";
 export {
   createMockOpenAIStream,
+  createErrorStream,
   buildChunk,
   createTypicalStreamChunks,
 } from "./openai-stream.js";
