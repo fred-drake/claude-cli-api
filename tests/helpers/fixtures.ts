@@ -110,6 +110,153 @@ export const sampleNdjsonStream = [
   }),
 ];
 
+export const sampleMultiBlockNdjsonStream = [
+  JSON.stringify({
+    type: "system",
+    subtype: "init",
+    session_id: "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    model: "claude-sonnet-4-6",
+  }),
+  JSON.stringify({
+    type: "stream_event",
+    event: {
+      type: "content_block_start",
+      index: 0,
+      content_block: { type: "text", text: "" },
+    },
+    session_id: "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+  }),
+  JSON.stringify({
+    type: "stream_event",
+    event: {
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "text_delta", text: "First" },
+    },
+    session_id: "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+  }),
+  JSON.stringify({
+    type: "stream_event",
+    event: { type: "content_block_stop", index: 0 },
+    session_id: "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+  }),
+  JSON.stringify({
+    type: "stream_event",
+    event: {
+      type: "content_block_start",
+      index: 1,
+      content_block: { type: "text", text: "" },
+    },
+    session_id: "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+  }),
+  JSON.stringify({
+    type: "stream_event",
+    event: {
+      type: "content_block_delta",
+      index: 1,
+      delta: { type: "text_delta", text: " Second" },
+    },
+    session_id: "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+  }),
+  JSON.stringify({
+    type: "stream_event",
+    event: { type: "content_block_stop", index: 1 },
+    session_id: "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+  }),
+  JSON.stringify({
+    type: "stream_event",
+    event: {
+      type: "message_delta",
+      delta: { stop_reason: "end_turn" },
+      usage: { output_tokens: 10 },
+    },
+    session_id: "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+  }),
+  JSON.stringify({
+    type: "stream_event",
+    event: { type: "message_stop" },
+    session_id: "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+  }),
+  JSON.stringify({
+    type: "result",
+    subtype: "success",
+    session_id: "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    is_error: false,
+    result: "First Second",
+    duration_ms: 2000,
+    num_turns: 1,
+    total_cost_usd: 0.005,
+    usage: {
+      input_tokens: 30,
+      output_tokens: 10,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0,
+    },
+  }),
+];
+
+export const sampleMaxTokensNdjsonStream = [
+  JSON.stringify({
+    type: "system",
+    subtype: "init",
+    session_id: "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    model: "claude-sonnet-4-6",
+  }),
+  JSON.stringify({
+    type: "stream_event",
+    event: {
+      type: "content_block_start",
+      index: 0,
+      content_block: { type: "text", text: "" },
+    },
+    session_id: "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+  }),
+  JSON.stringify({
+    type: "stream_event",
+    event: {
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "text_delta", text: "Trunc" },
+    },
+    session_id: "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+  }),
+  JSON.stringify({
+    type: "stream_event",
+    event: { type: "content_block_stop", index: 0 },
+    session_id: "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+  }),
+  JSON.stringify({
+    type: "stream_event",
+    event: {
+      type: "message_delta",
+      delta: { stop_reason: "max_tokens" },
+      usage: { output_tokens: 5 },
+    },
+    session_id: "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+  }),
+  JSON.stringify({
+    type: "stream_event",
+    event: { type: "message_stop" },
+    session_id: "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+  }),
+  JSON.stringify({
+    type: "result",
+    subtype: "success",
+    session_id: "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    is_error: false,
+    result: "Trunc",
+    duration_ms: 800,
+    num_turns: 1,
+    total_cost_usd: 0.002,
+    usage: {
+      input_tokens: 20,
+      output_tokens: 5,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0,
+    },
+  }),
+];
+
 export const sampleOpenAIResponse: ChatCompletionResponse = {
   id: "chatcmpl-abc123",
   object: "chat.completion",

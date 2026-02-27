@@ -18,6 +18,7 @@ import {
   createMockOpenAIStream,
   createErrorStream,
   createTypicalStreamChunks,
+  collectCallbacks,
 } from "../helpers/index.js";
 
 // --- Mock setup ---
@@ -57,29 +58,6 @@ function defaultContext(
     method: "POST",
     path: "/v1/chat/completions",
     ...overrides,
-  };
-}
-
-function collectCallbacks() {
-  const chunks: string[] = [];
-  let doneMetadata:
-    | { headers: Record<string, string>; usage?: unknown }
-    | undefined;
-  let error: unknown | undefined;
-
-  return {
-    callbacks: {
-      onChunk: (chunk: string) => chunks.push(chunk),
-      onDone: (meta: { headers: Record<string, string>; usage?: unknown }) => {
-        doneMetadata = meta;
-      },
-      onError: (err: unknown) => {
-        error = err;
-      },
-    },
-    chunks,
-    getDoneMetadata: () => doneMetadata,
-    getError: () => error,
   };
 }
 

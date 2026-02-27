@@ -47,6 +47,7 @@ export function createMockChildProcess(
   child.kill = (signal?: string) => {
     child.killed = true;
     child.emit("exit", signal === "SIGKILL" ? null : exitCode, signal);
+    process.nextTick(() => child.emit("close", exitCode, signal));
     return true;
   };
 
@@ -61,9 +62,14 @@ export function createMockChildProcess(
     }
     stderrStream.push(null);
 
-    child.exitCode = exitCode;
-    child.emit("exit", exitCode, null);
-    child.emit("close", exitCode, null);
+    // Delay exit/close by one tick so the stream's resume() (which is
+    // also scheduled via nextTick when a 'data' listener is added) has
+    // a chance to drain buffered data before close fires.
+    process.nextTick(() => {
+      child.exitCode = exitCode;
+      child.emit("exit", exitCode, null);
+      child.emit("close", exitCode, null);
+    });
   };
 
   if (delay > 0) {
@@ -97,6 +103,7 @@ export function createStreamingMockChildProcess(
   child.kill = (signal?: string) => {
     child.killed = true;
     child.emit("exit", signal === "SIGKILL" ? null : exitCode, signal);
+    process.nextTick(() => child.emit("close", exitCode, signal));
     return true;
   };
 
@@ -109,9 +116,16 @@ export function createStreamingMockChildProcess(
     }
     stdoutStream.push(null);
     stderrStream.push(null);
-    child.exitCode = exitCode;
-    child.emit("exit", exitCode, null);
-    child.emit("close", exitCode, null);
+    // Delay exit/close by one tick so the stream's resume() (which is
+    // also scheduled via nextTick when a 'data' listener is added) has
+    // a chance to drain buffered data before close fires. This matches
+    // real child_process behavior where close fires after stdio streams
+    // are fully consumed.
+    process.nextTick(() => {
+      child.exitCode = exitCode;
+      child.emit("exit", exitCode, null);
+      child.emit("close", exitCode, null);
+    });
   };
 
   process.nextTick(() => void emitLines());
