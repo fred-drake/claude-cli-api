@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "cclsp": {
+      "command": "npx",
+      "args": ["cclsp@latest"],
+      "env": {
+        "CCLSP_CONFIG_PATH": ".claude/cclsp.json"
+      }
+    },
+    "context7": {
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp"]
+    }
+  }
+}

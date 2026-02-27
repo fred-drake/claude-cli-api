@@ -3,5 +3,4 @@ node_modules/
 dist/
 .tsbuildinfo
 coverage/
-.claude/
-.mcp.json
+.claude/settings.local.json
