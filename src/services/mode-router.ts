@@ -1,4 +1,5 @@
 import type { BackendMode } from "../backends/types.js";
+import { normalizeHeader } from "../utils/headers.js";
 
 /**
  * Result of mode resolution. The error variant contains a minimal error
@@ -12,19 +13,6 @@ export type ModeRouterResult =
 
 const TRUTHY_VALUES = new Set(["true", "1", "yes"]);
 const FALSY_VALUES = new Set(["false", "0", "no"]);
-
-/**
- * Normalize a header value to a single string. Fastify represents
- * duplicate headers as `string[]`; we take the first value.
- */
-function normalizeHeader(
-  value: string | string[] | undefined,
-): string | undefined {
-  if (Array.isArray(value)) {
-    return value[0];
-  }
-  return value;
-}
 
 /**
  * Resolve the backend mode from request headers.
