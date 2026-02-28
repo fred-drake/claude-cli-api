@@ -75,7 +75,10 @@ export function createServer(config: ServerConfig): FastifyInstance {
   app.decorate("openaiPassthroughBackend", openaiPassthroughBackend);
 
   const claudeCodeBackend = new ClaudeCodeBackend(
-    { cliPath: config.claudePath, enabled: true },
+    {
+      cliPath: config.claudePath,
+      enabled: true,
+    },
     sessionManager,
   );
   app.decorate("claudeCodeBackend", claudeCodeBackend);
