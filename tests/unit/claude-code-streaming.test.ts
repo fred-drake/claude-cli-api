@@ -433,7 +433,7 @@ describe("ClaudeCodeBackend.completeStream()", () => {
     // event was processed before the kill. The key assertion is no error.
   });
 
-  it("passes --max-tokens when request.max_tokens is set", async () => {
+  it("does NOT pass --max-tokens to CLI (Tier 2 ignored)", async () => {
     const { spawn } = await import("node:child_process");
     const mockSpawn = vi.mocked(spawn);
 
@@ -455,9 +455,69 @@ describe("ClaudeCodeBackend.completeStream()", () => {
     );
 
     const args = mockSpawn.mock.calls[0]![1] as string[];
-    const maxIndex = args.indexOf("--max-tokens");
-    expect(maxIndex).toBeGreaterThan(-1);
-    expect(args[maxIndex + 1]).toBe("1024");
+    expect(args.indexOf("--max-tokens")).toBe(-1);
+  });
+
+  it("includes --model flag in CLI args", async () => {
+    const { spawn } = await import("node:child_process");
+    const mockSpawn = vi.mocked(spawn);
+
+    const child = createStreamingMockChildProcess(sampleNdjsonStream);
+    mockSpawn.mockReturnValueOnce(child as never);
+
+    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const { callbacks } = collectCallbacks();
+
+    await backend.completeStream(
+      sampleStreamRequest,
+      defaultContext(),
+      callbacks,
+    );
+
+    const args = mockSpawn.mock.calls[0]![1] as string[];
+    expect(args).toContain("--model");
+  });
+
+  it("includes --dangerously-skip-permissions flag", async () => {
+    const { spawn } = await import("node:child_process");
+    const mockSpawn = vi.mocked(spawn);
+
+    const child = createStreamingMockChildProcess(sampleNdjsonStream);
+    mockSpawn.mockReturnValueOnce(child as never);
+
+    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const { callbacks } = collectCallbacks();
+
+    await backend.completeStream(
+      sampleStreamRequest,
+      defaultContext(),
+      callbacks,
+    );
+
+    const args = mockSpawn.mock.calls[0]![1] as string[];
+    expect(args).toContain("--dangerously-skip-permissions");
+  });
+
+  it("includes --tools with empty string", async () => {
+    const { spawn } = await import("node:child_process");
+    const mockSpawn = vi.mocked(spawn);
+
+    const child = createStreamingMockChildProcess(sampleNdjsonStream);
+    mockSpawn.mockReturnValueOnce(child as never);
+
+    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const { callbacks } = collectCallbacks();
+
+    await backend.completeStream(
+      sampleStreamRequest,
+      defaultContext(),
+      callbacks,
+    );
+
+    const args = mockSpawn.mock.calls[0]![1] as string[];
+    const toolsIdx = args.indexOf("--tools");
+    expect(toolsIdx).toBeGreaterThan(-1);
+    expect(args[toolsIdx + 1]).toBe("");
   });
 
   it("injects X-Claude-Session-Created header on new session", async () => {
@@ -565,6 +625,74 @@ describe("ClaudeCodeBackend.completeStream()", () => {
     const session = sessionManager.getSession(sessionId);
     expect(session).toBeDefined();
     expect(session!.clientId).toBe("__anonymous__");
+  });
+
+  it("rejects Tier 3 param (tools) via onError, no spawn", async () => {
+    const { spawn } = await import("node:child_process");
+    const mockSpawn = vi.mocked(spawn);
+
+    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const { callbacks, getError } = collectCallbacks();
+
+    const requestWithTools = {
+      ...sampleStreamRequest,
+      tools: [{ type: "function", function: { name: "test" } }],
+    };
+
+    await backend.completeStream(requestWithTools, defaultContext(), callbacks);
+
+    const error = getError();
+    expect(error).toBeDefined();
+    expect(error!.error.code).toBe("unsupported_parameter");
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it("rejects unknown model via onError, no spawn", async () => {
+    const { spawn } = await import("node:child_process");
+    const mockSpawn = vi.mocked(spawn);
+
+    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const { callbacks, getError } = collectCallbacks();
+
+    const requestWithBadModel = {
+      ...sampleStreamRequest,
+      model: "o1-mini",
+    };
+
+    await backend.completeStream(
+      requestWithBadModel,
+      defaultContext(),
+      callbacks,
+    );
+
+    const error = getError();
+    expect(error).toBeDefined();
+    expect(error!.error.code).toBe("model_not_found");
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it("rejects system-only messages via onError, no spawn", async () => {
+    const { spawn } = await import("node:child_process");
+    const mockSpawn = vi.mocked(spawn);
+
+    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const { callbacks, getError } = collectCallbacks();
+
+    const requestWithSystemOnly = {
+      ...sampleStreamRequest,
+      messages: [{ role: "system" as const, content: "You are helpful" }],
+    };
+
+    await backend.completeStream(
+      requestWithSystemOnly,
+      defaultContext(),
+      callbacks,
+    );
+
+    const error = getError();
+    expect(error).toBeDefined();
+    expect(error!.error.code).toBe("invalid_request");
+    expect(mockSpawn).not.toHaveBeenCalled();
   });
 
   it("session error routes through onError callback", async () => {

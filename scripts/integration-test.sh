@@ -366,6 +366,186 @@ run_test "Client key via X-OpenAI-API-Key returns content" test_client_key
 
 stop_server
 
+# ======================================================================
+# GROUP 4: Claude Code Non-Streaming
+# ======================================================================
+echo ""
+echo "--- Group 4: Claude Code Non-Streaming ---"
+start_server \
+  ANTHROPIC_API_KEY="$ANTHROPIC_KEY"
+
+# Test 12: Claude Code non-streaming returns OpenAI-format response
+test_claude_nonstreaming() {
+  chat_request "gpt-4o" "Say hi in exactly 3 words" -H "X-Claude-Code: true"
+  assert_status 200 || return 1
+  assert_json '.object' 'chat.completion' || return 1
+  assert_json_exists '.choices[0].message.content' || return 1
+  assert_json '.choices[0].message.role' 'assistant' || return 1
+  assert_json '.choices[0].finish_reason' 'stop'
+}
+run_test "Claude Code non-streaming returns content" test_claude_nonstreaming
+
+# Test 13: X-Backend-Mode header set to claude-code
+test_claude_backend_mode() {
+  chat_request "gpt-4o" "Say ok" -H "X-Claude-Code: true"
+  assert_status 200 || return 1
+  assert_header "X-Backend-Mode" "claude-code"
+}
+run_test "Claude Code X-Backend-Mode header" test_claude_backend_mode
+
+# Test 14: X-Claude-Session-ID header present
+test_claude_session_id() {
+  chat_request "gpt-4o" "Say ok" -H "X-Claude-Code: true"
+  assert_status 200 || return 1
+  assert_header_present "X-Claude-Session-ID"
+}
+run_test "Claude Code X-Claude-Session-ID header present" test_claude_session_id
+
+# Test 15: X-Claude-Session-Created header for new sessions
+test_claude_session_created() {
+  chat_request "gpt-4o" "Say ok" -H "X-Claude-Code: true"
+  assert_status 200 || return 1
+  assert_header "X-Claude-Session-Created" "true"
+}
+run_test "Claude Code X-Claude-Session-Created for new session" test_claude_session_created
+
+# Test 16: Model echoed back as requested (gpt-4o)
+test_claude_model_echo() {
+  chat_request "gpt-4o" "Say ok" -H "X-Claude-Code: true"
+  assert_status 200 || return 1
+  assert_json '.model' 'gpt-4o'
+}
+run_test "Claude Code model echoed back as requested" test_claude_model_echo
+
+# Test 17: Tier 3 param (tools) returns 400
+test_claude_tier3_rejection() {
+  local payload
+  payload=$(jq -n '{
+    model: "gpt-4o",
+    messages: [{role: "user", content: "Hi"}],
+    tools: [{type: "function", function: {name: "test"}}]
+  }')
+  do_request POST /v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -H "X-Claude-Code: true" \
+    -d "$payload"
+  assert_status 400 || return 1
+  assert_json '.error.code' 'unsupported_parameter'
+}
+run_test "Claude Code Tier 3 param (tools) returns 400" test_claude_tier3_rejection
+
+# Test 18: Unknown model returns 400
+test_claude_unknown_model() {
+  chat_request "o1-mini" "Hi" -H "X-Claude-Code: true"
+  assert_status 400 || return 1
+  assert_json '.error.code' 'model_not_found'
+}
+run_test "Claude Code unknown model returns 400" test_claude_unknown_model
+
+# Test 19: Tier 2 ignored params reported in header
+test_claude_ignored_params() {
+  local payload
+  payload=$(jq -n '{
+    model: "gpt-4o",
+    messages: [{role: "user", content: "Say ok"}],
+    temperature: 0.7,
+    top_p: 0.9
+  }')
+  do_request POST /v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -H "X-Claude-Code: true" \
+    -d "$payload"
+  assert_status 200 || return 1
+  assert_header_present "X-Claude-Ignored-Params"
+}
+run_test "Claude Code Tier 2 ignored params header" test_claude_ignored_params
+
+stop_server
+
+# ======================================================================
+# GROUP 5: Claude Code Streaming
+# ======================================================================
+echo ""
+echo "--- Group 5: Claude Code Streaming ---"
+start_server \
+  ANTHROPIC_API_KEY="$ANTHROPIC_KEY"
+
+# Test 20: Claude Code streaming SSE format with [DONE]
+test_claude_streaming() {
+  stream_request "gpt-4o" "Say hi in exactly 3 words" -H "X-Claude-Code: true"
+  assert_status 200 || return 1
+  echo "$RESP_BODY" | grep -q '^data: {' || {
+    echo "    No SSE data lines found" >&2
+    return 1
+  }
+  echo "$RESP_BODY" | grep -q '^data: \[DONE\]' || {
+    echo "    Missing data: [DONE] terminator" >&2
+    return 1
+  }
+}
+run_test "Claude Code streaming SSE format with [DONE]" test_claude_streaming
+
+# Test 21: Claude Code streaming X-Backend-Mode header
+test_claude_streaming_backend_mode() {
+  stream_request "gpt-4o" "Say ok" -H "X-Claude-Code: true"
+  assert_status 200 || return 1
+  assert_header "X-Backend-Mode" "claude-code"
+}
+run_test "Claude Code streaming X-Backend-Mode header" test_claude_streaming_backend_mode
+
+stop_server
+
+# ======================================================================
+# GROUP 6: Claude Code Sessions
+# ======================================================================
+echo ""
+echo "--- Group 6: Claude Code Sessions ---"
+start_server \
+  ANTHROPIC_API_KEY="$ANTHROPIC_KEY"
+
+# Test 22: Session resume preserves context
+test_claude_session_resume() {
+  # First request — create session, remember a word
+  chat_request "gpt-4o" "Remember the word 'banana'. Reply only with 'ok'." \
+    -H "X-Claude-Code: true"
+  assert_status 200 || return 1
+
+  # Extract session ID from response headers
+  local session_id
+  session_id=$(echo "$RESP_HEADERS" | grep -i "^X-Claude-Session-ID:" | head -1 | sed 's/^[^:]*: *//' | tr -d '\r')
+  if [ -z "$session_id" ]; then
+    echo "    No X-Claude-Session-ID header found" >&2
+    return 1
+  fi
+
+  # Second request — resume session, ask for the word
+  chat_request "gpt-4o" "What word did I ask you to remember? Reply with just the word." \
+    -H "X-Claude-Code: true" \
+    -H "X-Claude-Session-ID: ${session_id}"
+  assert_status 200 || return 1
+
+  # Should NOT have X-Claude-Session-Created (resumed, not new)
+  if echo "$RESP_HEADERS" | grep -qi "^X-Claude-Session-Created:"; then
+    local created_val
+    created_val=$(echo "$RESP_HEADERS" | grep -i "^X-Claude-Session-Created:" | head -1 | sed 's/^[^:]*: *//' | tr -d '\r')
+    if [ "$created_val" = "true" ]; then
+      echo "    Expected no X-Claude-Session-Created on resume" >&2
+      return 1
+    fi
+  fi
+
+  # Check that "banana" appears in the response
+  local content
+  content=$(echo "$RESP_BODY" | jq -r '.choices[0].message.content' 2>/dev/null)
+  echo "$content" | grep -qi "banana" || {
+    echo "    Expected 'banana' in response, got: ${content}" >&2
+    return 1
+  }
+}
+run_test "Claude Code session resume preserves context" test_claude_session_resume
+
+stop_server
+
 # ── Summary ───────────────────────────────────────────────────────────
 echo ""
 echo "=========================================="
