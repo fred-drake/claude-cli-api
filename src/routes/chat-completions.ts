@@ -1,15 +1,23 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import type { ChatCompletionRequest } from "../types/openai.js";
 import type {
+  BackendMode,
   BackendStreamCallbacks,
   CompletionBackend,
   RequestContext,
 } from "../backends/types.js";
 import type { RateLimitInfo } from "../middleware/rate-limiter.js";
 import { resolveMode } from "../services/mode-router.js";
-import { ApiError, ModeRouterError } from "../errors/handler.js";
-import { normalizeHeader, extractBearerToken } from "../utils/headers.js";
-import { SECURITY_HEADERS } from "../server.js";
+import {
+  ApiError,
+  ModeRouterError,
+  buildOpenAIError,
+} from "../errors/handler.js";
+import {
+  normalizeHeader,
+  extractBearerToken,
+  SECURITY_HEADERS,
+} from "../utils/headers.js";
 import { buildAuthHook } from "../middleware/auth.js";
 import { validateChatCompletionInput } from "../middleware/input-validation.js";
 
@@ -25,6 +33,25 @@ function validateRequestBody(body: unknown): body is ChatCompletionRequest {
   if (!Array.isArray(obj.messages) || obj.messages.length === 0) return false;
   if (obj.stream !== undefined && typeof obj.stream !== "boolean") return false;
   return true;
+}
+
+/** Derives the concurrency key from a request (API key or IP fallback). */
+function getConcurrencyKey(request: FastifyRequest): string {
+  return extractBearerToken(request.headers.authorization) ?? request.ip;
+}
+
+/** Sets the Retry-After header from a rate limit reset timestamp. */
+function setRetryAfterHeader(reply: FastifyReply, resetMs: number): void {
+  const retryAfter = Math.ceil((resetMs - Date.now()) / 1000);
+  reply.header("Retry-After", String(Math.max(1, retryAfter)));
+}
+
+/** Builds a 429 rate limit ApiError with the given message. */
+function rateLimitError(message: string): ApiError {
+  return new ApiError(
+    429,
+    buildOpenAIError(message, "rate_limit_error", "rate_limit_exceeded"),
+  );
 }
 
 /**
@@ -64,33 +91,18 @@ export async function chatCompletionsRoute(app: FastifyInstance) {
       setRateLimitHeaders(reply, ipResult.info);
 
       if (!ipResult.allowed) {
-        const retryAfter = Math.ceil(
-          (ipResult.info.resetMs - Date.now()) / 1000,
+        setRetryAfterHeader(reply, ipResult.info.resetMs);
+        throw rateLimitError(
+          "Rate limit exceeded. Too many requests from this IP.",
         );
-        reply.header("Retry-After", String(Math.max(1, retryAfter)));
-        throw new ApiError(429, {
-          error: {
-            message: "Rate limit exceeded. Too many requests from this IP.",
-            type: "rate_limit_error",
-            param: null,
-            code: "rate_limit_exceeded",
-          },
-        });
       }
 
       // Per-key concurrency limit
-      const apiKey = extractBearerToken(request.headers.authorization);
-      const concurrencyKey = apiKey ?? request.ip;
+      const concurrencyKey = getConcurrencyKey(request);
       if (!app.concurrencyLimiter.acquire(concurrencyKey)) {
-        throw new ApiError(429, {
-          error: {
-            message:
-              "Too many concurrent requests. Please wait for existing requests to complete.",
-            type: "rate_limit_error",
-            param: null,
-            code: "rate_limit_exceeded",
-          },
-        });
+        throw rateLimitError(
+          "Too many concurrent requests. Please wait for existing requests to complete.",
+        );
       }
 
       // Per-session rate limit (if session header present)
@@ -100,18 +112,8 @@ export async function chatCompletionsRoute(app: FastifyInstance) {
         if (!sessionResult.allowed) {
           // Release concurrency slot since we're rejecting
           app.concurrencyLimiter.release(concurrencyKey);
-          const retryAfter = Math.ceil(
-            (sessionResult.info.resetMs - Date.now()) / 1000,
-          );
-          reply.header("Retry-After", String(Math.max(1, retryAfter)));
-          throw new ApiError(429, {
-            error: {
-              message: "Rate limit exceeded for this session.",
-              type: "rate_limit_error",
-              param: null,
-              code: "rate_limit_exceeded",
-            },
-          });
+          setRetryAfterHeader(reply, sessionResult.info.resetMs);
+          throw rateLimitError("Rate limit exceeded for this session.");
         }
       }
     },
@@ -119,8 +121,7 @@ export async function chatCompletionsRoute(app: FastifyInstance) {
 
   // --- Concurrency release on response ---
   app.addHook("onResponse", (request: FastifyRequest) => {
-    const apiKey = extractBearerToken(request.headers.authorization);
-    app.concurrencyLimiter.release(apiKey ?? request.ip);
+    app.concurrencyLimiter.release(getConcurrencyKey(request));
   });
 
   app.post<{ Body: ChatCompletionRequest }>(
@@ -139,17 +140,16 @@ export async function chatCompletionsRoute(app: FastifyInstance) {
 
       // 3. Validate request body at runtime (§9.6 validation errors)
       if (!validateRequestBody(request.body)) {
-        throw new ApiError(400, {
-          error: {
-            message:
-              "Invalid request: 'model' must be a non-empty string, " +
+        throw new ApiError(
+          400,
+          buildOpenAIError(
+            "Invalid request: 'model' must be a non-empty string, " +
               "'messages' must be a non-empty array, and " +
               "'stream' (if provided) must be a boolean.",
-            type: "invalid_request_error",
-            param: null,
-            code: "invalid_request",
-          },
-        });
+            "invalid_request_error",
+            "invalid_request",
+          ),
+        );
       }
 
       // 3b. Validate input limits (message count, content length, model length)
@@ -176,8 +176,7 @@ export async function chatCompletionsRoute(app: FastifyInstance) {
       if (body.stream) {
         // For hijacked responses, onResponse doesn't fire.
         // Release concurrency slot when the raw socket closes.
-        const apiKey = extractBearerToken(request.headers.authorization);
-        const concurrencyKey = apiKey ?? request.ip;
+        const concurrencyKey = getConcurrencyKey(request);
         reply.raw.on("close", () => {
           app.concurrencyLimiter.release(concurrencyKey);
         });
@@ -218,7 +217,7 @@ async function handleStreaming(
   backend: CompletionBackend,
   body: ChatCompletionRequest,
   context: RequestContext,
-  mode: string,
+  mode: BackendMode,
 ): Promise<void> {
   // Write SSE headers eagerly before streaming begins.
   // X-Backend-Mode is known from mode resolution.
@@ -235,14 +234,11 @@ async function handleStreaming(
   // Cache-Control uses "no-cache" (SSE convention) rather than
   // "no-store" (security default) — both prevent caching.
   const headers: Record<string, string> = {
+    ...SECURITY_HEADERS,
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
     Connection: "keep-alive",
     "X-Backend-Mode": mode,
-    "X-Content-Type-Options": SECURITY_HEADERS["X-Content-Type-Options"],
-    "X-Frame-Options": SECURITY_HEADERS["X-Frame-Options"],
-    "Content-Security-Policy": SECURITY_HEADERS["Content-Security-Policy"],
-    "Referrer-Policy": SECURITY_HEADERS["Referrer-Policy"],
   };
 
   // For resumed sessions, the session ID is known from request headers

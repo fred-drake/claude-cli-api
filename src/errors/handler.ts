@@ -42,7 +42,7 @@ export class ApiError extends Error {
   }
 }
 
-function buildOpenAIError(
+export function buildOpenAIError(
   message: string,
   type: string,
   code: string | null,
