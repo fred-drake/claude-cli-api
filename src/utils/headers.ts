@@ -24,6 +24,22 @@ export function extractBearerToken(
 }
 
 /**
+ * Security headers applied to all responses.
+ * Defined here (not in server.ts) so route modules can import them
+ * without an inverted dependency on the server composition root.
+ */
+export const SECURITY_HEADERS = {
+  "X-Content-Type-Options": "nosniff",
+  "Cache-Control": "no-store",
+  "X-Frame-Options": "DENY",
+  "Content-Security-Policy": "default-src 'none'",
+  "Referrer-Policy": "no-referrer",
+} as const;
+
+/** Pre-computed entries to avoid per-response allocation in the onSend hook. */
+export const SECURITY_HEADER_ENTRIES = Object.entries(SECURITY_HEADERS);
+
+/**
  * Maximum length for a client-provided X-Request-ID.
  * Prevents log flooding and header injection.
  */

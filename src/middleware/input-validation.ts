@@ -1,4 +1,4 @@
-import { ApiError } from "../errors/handler.js";
+import { ApiError, buildOpenAIError } from "../errors/handler.js";
 
 export const MAX_MESSAGES = 100;
 export const MAX_CONTENT_LENGTH = 500_000;
@@ -16,27 +16,29 @@ export function validateChatCompletionInput(body: unknown): void {
 
   // Validate model length
   if (typeof obj.model === "string" && obj.model.length > MAX_MODEL_LENGTH) {
-    throw new ApiError(400, {
-      error: {
-        message: `Model name exceeds maximum length of ${MAX_MODEL_LENGTH} characters`,
-        type: "invalid_request_error",
-        param: "model",
-        code: "invalid_request",
-      },
-    });
+    throw new ApiError(
+      400,
+      buildOpenAIError(
+        `Model name exceeds maximum length of ${MAX_MODEL_LENGTH} characters`,
+        "invalid_request_error",
+        "invalid_request",
+        "model",
+      ),
+    );
   }
 
   // Validate message count
   if (Array.isArray(obj.messages)) {
     if (obj.messages.length > MAX_MESSAGES) {
-      throw new ApiError(400, {
-        error: {
-          message: `Too many messages: ${obj.messages.length} exceeds maximum of ${MAX_MESSAGES}`,
-          type: "invalid_request_error",
-          param: "messages",
-          code: "invalid_request",
-        },
-      });
+      throw new ApiError(
+        400,
+        buildOpenAIError(
+          `Too many messages: ${obj.messages.length} exceeds maximum of ${MAX_MESSAGES}`,
+          "invalid_request_error",
+          "invalid_request",
+          "messages",
+        ),
+      );
     }
 
     // Validate content length of each message
@@ -47,14 +49,15 @@ export function validateChatCompletionInput(body: unknown): void {
           typeof message.content === "string" &&
           message.content.length > MAX_CONTENT_LENGTH
         ) {
-          throw new ApiError(400, {
-            error: {
-              message: `Message content exceeds maximum length of ${MAX_CONTENT_LENGTH} characters`,
-              type: "invalid_request_error",
-              param: "messages",
-              code: "invalid_request",
-            },
-          });
+          throw new ApiError(
+            400,
+            buildOpenAIError(
+              `Message content exceeds maximum length of ${MAX_CONTENT_LENGTH} characters`,
+              "invalid_request_error",
+              "invalid_request",
+              "messages",
+            ),
+          );
         }
         // OpenAI supports content as array of parts (e.g. text + image_url).
         // Check text length within each part to prevent bypass via array format.
@@ -66,14 +69,15 @@ export function validateChatCompletionInput(body: unknown): void {
                 typeof p.text === "string" &&
                 p.text.length > MAX_CONTENT_LENGTH
               ) {
-                throw new ApiError(400, {
-                  error: {
-                    message: `Message content part exceeds maximum length of ${MAX_CONTENT_LENGTH} characters`,
-                    type: "invalid_request_error",
-                    param: "messages",
-                    code: "invalid_request",
-                  },
-                });
+                throw new ApiError(
+                  400,
+                  buildOpenAIError(
+                    `Message content part exceeds maximum length of ${MAX_CONTENT_LENGTH} characters`,
+                    "invalid_request_error",
+                    "invalid_request",
+                    "messages",
+                  ),
+                );
               }
             }
           }

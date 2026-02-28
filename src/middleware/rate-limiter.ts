@@ -104,12 +104,14 @@ export class SlidingWindowRateLimiter {
    */
   cleanup(): void {
     const now = Date.now();
+    const cutoff = now - this.windowMs;
     for (const [key, timestamps] of this.requests) {
-      const valid = timestamps.filter((t) => now - t < this.windowMs);
-      if (valid.length === 0) {
+      let i = 0;
+      while (i < timestamps.length && timestamps[i]! < cutoff) i++;
+      if (i >= timestamps.length) {
         this.requests.delete(key);
-      } else {
-        this.requests.set(key, valid);
+      } else if (i > 0) {
+        timestamps.splice(0, i);
       }
     }
   }
@@ -124,8 +126,15 @@ export class SlidingWindowRateLimiter {
   }
 
   private getValidTimestamps(key: string, now: number): number[] {
-    const timestamps = this.requests.get(key) ?? [];
-    return timestamps.filter((t) => now - t < this.windowMs);
+    const timestamps = this.requests.get(key);
+    if (!timestamps || timestamps.length === 0) return [];
+    // Timestamps are appended in chronological order, so find the
+    // first still-valid entry and splice expired ones in place.
+    const cutoff = now - this.windowMs;
+    let i = 0;
+    while (i < timestamps.length && timestamps[i]! < cutoff) i++;
+    if (i > 0) timestamps.splice(0, i);
+    return timestamps;
   }
 }
 

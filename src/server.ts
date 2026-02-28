@@ -9,21 +9,13 @@ import { SessionManager } from "./services/session-manager.js";
 import { OpenAIPassthroughBackend } from "./backends/openai-passthrough.js";
 import { ClaudeCodeBackend } from "./backends/claude-code.js";
 import { registerErrorHandler } from "./errors/handler.js";
-import { isValidRequestId } from "./utils/headers.js";
+import { isValidRequestId, SECURITY_HEADER_ENTRIES } from "./utils/headers.js";
 import {
   SlidingWindowRateLimiter,
   ConcurrencyLimiter,
 } from "./middleware/rate-limiter.js";
 
 // Fastify declaration merging is in src/types/fastify.d.ts
-
-export const SECURITY_HEADERS = {
-  "X-Content-Type-Options": "nosniff",
-  "Cache-Control": "no-store",
-  "X-Frame-Options": "DENY",
-  "Content-Security-Policy": "default-src 'none'",
-  "Referrer-Policy": "no-referrer",
-} as const;
 
 const CORS_METHODS = "POST, GET, OPTIONS";
 const CORS_ALLOWED_HEADERS = [
@@ -162,7 +154,7 @@ export function createServer(config: ServerConfig): FastifyInstance {
 
   // --- Security headers hook (Task 7.3) ---
   app.addHook("onSend", (_request, reply, payload, done) => {
-    for (const [key, value] of Object.entries(SECURITY_HEADERS)) {
+    for (const [key, value] of SECURITY_HEADER_ENTRIES) {
       reply.header(key, value);
     }
     done(null, payload);
