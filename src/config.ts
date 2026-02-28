@@ -26,6 +26,11 @@ export interface ServerConfig {
   maxSessionAgeMs: number;
   sessionCleanupIntervalMs: number;
 
+  rateLimitPerIp: number;
+  rateLimitPerSession: number;
+  maxConcurrentPerKey: number;
+  rateLimitWindowMs: number;
+
   openaiApiKey: string;
   openaiBaseUrl: string;
   openaiPassthroughEnabled: boolean;
@@ -161,6 +166,47 @@ export function loadConfig(): ServerConfig {
     "SESSION_CLEANUP_INTERVAL_MS",
   );
 
+  const rateLimitPerIpStr = process.env.RATE_LIMIT_PER_IP ?? "60";
+  const rateLimitPerIp = parseIntStrict(rateLimitPerIpStr, "RATE_LIMIT_PER_IP");
+  if (rateLimitPerIp < 1) {
+    throw new Error(
+      `RATE_LIMIT_PER_IP must be greater than 0, got ${rateLimitPerIp}`,
+    );
+  }
+
+  const rateLimitPerSessionStr = process.env.RATE_LIMIT_PER_SESSION ?? "10";
+  const rateLimitPerSession = parseIntStrict(
+    rateLimitPerSessionStr,
+    "RATE_LIMIT_PER_SESSION",
+  );
+  if (rateLimitPerSession < 1) {
+    throw new Error(
+      `RATE_LIMIT_PER_SESSION must be greater than 0, got ${rateLimitPerSession}`,
+    );
+  }
+
+  const maxConcurrentPerKeyStr = process.env.MAX_CONCURRENT_PER_KEY ?? "5";
+  const maxConcurrentPerKey = parseIntStrict(
+    maxConcurrentPerKeyStr,
+    "MAX_CONCURRENT_PER_KEY",
+  );
+  if (maxConcurrentPerKey < 1) {
+    throw new Error(
+      `MAX_CONCURRENT_PER_KEY must be greater than 0, got ${maxConcurrentPerKey}`,
+    );
+  }
+
+  const rateLimitWindowMsStr = process.env.RATE_LIMIT_WINDOW_MS ?? "60000";
+  const rateLimitWindowMs = parseIntStrict(
+    rateLimitWindowMsStr,
+    "RATE_LIMIT_WINDOW_MS",
+  );
+  if (rateLimitWindowMs < 1000) {
+    throw new Error(
+      `RATE_LIMIT_WINDOW_MS must be at least 1000, got ${rateLimitWindowMs}`,
+    );
+  }
+
   return {
     port,
     host: process.env.HOST ?? "127.0.0.1",
@@ -179,6 +225,11 @@ export function loadConfig(): ServerConfig {
     sessionTtlMs,
     maxSessionAgeMs,
     sessionCleanupIntervalMs,
+
+    rateLimitPerIp,
+    rateLimitPerSession,
+    maxConcurrentPerKey,
+    rateLimitWindowMs,
 
     openaiApiKey: process.env.OPENAI_API_KEY ?? "",
     openaiBaseUrl: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",

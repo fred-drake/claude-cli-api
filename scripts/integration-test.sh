@@ -546,6 +546,91 @@ run_test "Claude Code session resume preserves context" test_claude_session_resu
 
 stop_server
 
+# ======================================================================
+# GROUP 7: Auth & Rate Limiting
+# ======================================================================
+echo ""
+echo "--- Group 7: Auth & Rate Limiting ---"
+E2E_API_KEY="sk-cca-e2e-test-key-$(date +%s)"
+start_server \
+  OPENAI_API_KEY="$OPENAI_KEY" \
+  ANTHROPIC_API_KEY="$ANTHROPIC_KEY" \
+  API_KEY="$E2E_API_KEY" \
+  RATE_LIMIT_PER_IP=5 \
+  RATE_LIMIT_WINDOW_MS=60000
+
+# Test 23: Missing auth returns 401
+test_auth_missing() {
+  chat_request "gpt-4o-mini" "Say ok"
+  assert_status 401 || return 1
+  assert_json '.error.code' 'missing_api_key'
+}
+run_test "Missing auth returns 401" test_auth_missing
+
+# Test 24: Wrong key returns 401
+test_auth_wrong_key() {
+  chat_request "gpt-4o-mini" "Say ok" -H "Authorization: Bearer sk-cca-wrong-key"
+  assert_status 401 || return 1
+  assert_json '.error.code' 'invalid_api_key'
+}
+run_test "Wrong key returns 401" test_auth_wrong_key
+
+# Test 25: Valid key returns 200
+test_auth_valid_key() {
+  chat_request "gpt-4o-mini" "Say ok" -H "Authorization: Bearer ${E2E_API_KEY}"
+  assert_status 200 || return 1
+  assert_json_exists '.choices[0].message.content'
+}
+run_test "Valid key returns 200" test_auth_valid_key
+
+# Test 26: Health endpoint accessible without auth
+test_auth_health_bypass() {
+  do_request GET /health
+  assert_status 200 || return 1
+  assert_json '.status' 'ready'
+}
+run_test "Health accessible without auth" test_auth_health_bypass
+
+# Test 27: Models endpoint accessible without auth
+test_auth_models_bypass() {
+  do_request GET /v1/models
+  assert_status 200
+}
+run_test "Models accessible without auth" test_auth_models_bypass
+
+# Test 28: Rate limit headers present on success
+test_ratelimit_headers() {
+  chat_request "gpt-4o-mini" "Say ok" -H "Authorization: Bearer ${E2E_API_KEY}"
+  assert_status 200 || return 1
+  assert_header_present "X-RateLimit-Limit" || return 1
+  assert_header_present "X-RateLimit-Remaining" || return 1
+  assert_header_present "X-RateLimit-Reset"
+}
+run_test "Rate limit headers present on success" test_ratelimit_headers
+
+# Test 29: Rate limit enforcement (exhaust remaining quota then expect 429)
+# Server was started with RATE_LIMIT_PER_IP=5. Some requests already consumed
+# by tests above. Send more until we hit 429.
+test_ratelimit_enforcement() {
+  local got_429=false
+  for i in $(seq 1 10); do
+    chat_request "gpt-4o-mini" "Say ok" -H "Authorization: Bearer ${E2E_API_KEY}"
+    if [ "$RESP_STATUS" = "429" ]; then
+      got_429=true
+      break
+    fi
+  done
+  if [ "$got_429" != "true" ]; then
+    echo "    Expected 429 after exceeding rate limit" >&2
+    return 1
+  fi
+  assert_header_present "Retry-After" || return 1
+  assert_json '.error.code' 'rate_limit_exceeded'
+}
+run_test "Rate limit returns 429 with Retry-After" test_ratelimit_enforcement
+
+stop_server
+
 # ── Summary ───────────────────────────────────────────────────────────
 echo ""
 echo "=========================================="
