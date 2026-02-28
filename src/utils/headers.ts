@@ -12,6 +12,18 @@ export function normalizeHeader(
 }
 
 /**
+ * Extracts the API key from an Authorization header.
+ * Expects "Bearer <key>" format; returns undefined otherwise.
+ */
+export function extractBearerToken(
+  header: string | string[] | undefined,
+): string | undefined {
+  if (typeof header !== "string") return undefined;
+  if (!header.startsWith("Bearer ")) return undefined;
+  return header.slice(7);
+}
+
+/**
  * Maximum length for a client-provided X-Request-ID.
  * Prevents log flooding and header injection.
  */

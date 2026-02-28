@@ -10,6 +10,10 @@ import { OpenAIPassthroughBackend } from "./backends/openai-passthrough.js";
 import { ClaudeCodeBackend } from "./backends/claude-code.js";
 import { registerErrorHandler } from "./errors/handler.js";
 import { isValidRequestId } from "./utils/headers.js";
+import {
+  SlidingWindowRateLimiter,
+  ConcurrencyLimiter,
+} from "./middleware/rate-limiter.js";
 
 // Fastify declaration merging is in src/types/fastify.d.ts
 
@@ -83,6 +87,33 @@ export function createServer(config: ServerConfig): FastifyInstance {
   );
   app.decorate("claudeCodeBackend", claudeCodeBackend);
 
+  // --- Rate limiters ---
+  const ipRateLimiter = new SlidingWindowRateLimiter(
+    config.rateLimitPerIp,
+    config.rateLimitWindowMs,
+  );
+  const sessionRateLimiter = new SlidingWindowRateLimiter(
+    config.rateLimitPerSession,
+    config.rateLimitWindowMs,
+  );
+  const concurrencyLimiter = new ConcurrencyLimiter(config.maxConcurrentPerKey);
+  app.decorate("ipRateLimiter", ipRateLimiter);
+  app.decorate("sessionRateLimiter", sessionRateLimiter);
+  app.decorate("concurrencyLimiter", concurrencyLimiter);
+
+  const rateLimitCleanupTimer = setInterval(() => {
+    ipRateLimiter.cleanup();
+    sessionRateLimiter.cleanup();
+  }, config.rateLimitWindowMs);
+  rateLimitCleanupTimer.unref();
+
+  app.addHook("onClose", () => {
+    clearInterval(rateLimitCleanupTimer);
+    ipRateLimiter.destroy();
+    sessionRateLimiter.destroy();
+    concurrencyLimiter.destroy();
+  });
+
   // --- Request ID hook (Task 7.7) ---
   // Use client-provided X-Request-ID if valid, otherwise generate one.
   // Validation prevents header injection (newlines, control chars) and
@@ -141,6 +172,9 @@ export function createServer(config: ServerConfig): FastifyInstance {
   registerErrorHandler(app);
 
   // --- Route registration ---
+  // Note: /health and /v1/models are intentionally unprotected by auth and
+  // rate limiting. They are lightweight read-only endpoints needed by load
+  // balancers and monitoring. Rate limiting is scoped to chatCompletionsRoute.
   app.register(healthRoute);
   app.register(chatCompletionsRoute);
   app.register(modelsRoute);

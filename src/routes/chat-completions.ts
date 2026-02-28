@@ -5,22 +5,13 @@ import type {
   CompletionBackend,
   RequestContext,
 } from "../backends/types.js";
+import type { RateLimitInfo } from "../middleware/rate-limiter.js";
 import { resolveMode } from "../services/mode-router.js";
 import { ApiError, ModeRouterError } from "../errors/handler.js";
-import { normalizeHeader } from "../utils/headers.js";
+import { normalizeHeader, extractBearerToken } from "../utils/headers.js";
 import { SECURITY_HEADERS } from "../server.js";
-
-/**
- * Extracts the API key from an Authorization header.
- * Expects "Bearer <key>" format; returns undefined otherwise.
- */
-function extractBearerToken(
-  header: string | string[] | undefined,
-): string | undefined {
-  if (typeof header !== "string") return undefined;
-  if (!header.startsWith("Bearer ")) return undefined;
-  return header.slice(7);
-}
+import { buildAuthHook } from "../middleware/auth.js";
+import { validateChatCompletionInput } from "../middleware/input-validation.js";
 
 /**
  * Validates the chat completion request body at runtime.
@@ -58,6 +49,80 @@ function buildRequestContext(
 }
 
 export async function chatCompletionsRoute(app: FastifyInstance) {
+  // --- Auth hook (only for this route plugin) ---
+  // Registered as onRequest so unauthenticated requests are rejected
+  // before the body is parsed, saving resources under attack.
+  const authHook = buildAuthHook(app.config.apiKeys);
+  app.addHook("onRequest", authHook);
+
+  // --- Rate limit preHandler ---
+  app.addHook(
+    "preHandler",
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      // Per-IP rate limit
+      const ipResult = app.ipRateLimiter.record(request.ip);
+      setRateLimitHeaders(reply, ipResult.info);
+
+      if (!ipResult.allowed) {
+        const retryAfter = Math.ceil(
+          (ipResult.info.resetMs - Date.now()) / 1000,
+        );
+        reply.header("Retry-After", String(Math.max(1, retryAfter)));
+        throw new ApiError(429, {
+          error: {
+            message: "Rate limit exceeded. Too many requests from this IP.",
+            type: "rate_limit_error",
+            param: null,
+            code: "rate_limit_exceeded",
+          },
+        });
+      }
+
+      // Per-key concurrency limit
+      const apiKey = extractBearerToken(request.headers.authorization);
+      const concurrencyKey = apiKey ?? request.ip;
+      if (!app.concurrencyLimiter.acquire(concurrencyKey)) {
+        throw new ApiError(429, {
+          error: {
+            message:
+              "Too many concurrent requests. Please wait for existing requests to complete.",
+            type: "rate_limit_error",
+            param: null,
+            code: "rate_limit_exceeded",
+          },
+        });
+      }
+
+      // Per-session rate limit (if session header present)
+      const sessionId = normalizeHeader(request.headers["x-claude-session-id"]);
+      if (sessionId) {
+        const sessionResult = app.sessionRateLimiter.record(sessionId);
+        if (!sessionResult.allowed) {
+          // Release concurrency slot since we're rejecting
+          app.concurrencyLimiter.release(concurrencyKey);
+          const retryAfter = Math.ceil(
+            (sessionResult.info.resetMs - Date.now()) / 1000,
+          );
+          reply.header("Retry-After", String(Math.max(1, retryAfter)));
+          throw new ApiError(429, {
+            error: {
+              message: "Rate limit exceeded for this session.",
+              type: "rate_limit_error",
+              param: null,
+              code: "rate_limit_exceeded",
+            },
+          });
+        }
+      }
+    },
+  );
+
+  // --- Concurrency release on response ---
+  app.addHook("onResponse", (request: FastifyRequest) => {
+    const apiKey = extractBearerToken(request.headers.authorization);
+    app.concurrencyLimiter.release(apiKey ?? request.ip);
+  });
+
   app.post<{ Body: ChatCompletionRequest }>(
     "/v1/chat/completions",
     async (request, reply) => {
@@ -87,6 +152,9 @@ export async function chatCompletionsRoute(app: FastifyInstance) {
         });
       }
 
+      // 3b. Validate input limits (message count, content length, model length)
+      validateChatCompletionInput(request.body);
+
       // 4. Select backend based on resolved mode
       const backend: CompletionBackend =
         result.mode === "claude-code"
@@ -106,6 +174,14 @@ export async function chatCompletionsRoute(app: FastifyInstance) {
 
       // 7. Streaming path
       if (body.stream) {
+        // For hijacked responses, onResponse doesn't fire.
+        // Release concurrency slot when the raw socket closes.
+        const apiKey = extractBearerToken(request.headers.authorization);
+        const concurrencyKey = apiKey ?? request.ip;
+        reply.raw.on("close", () => {
+          app.concurrencyLimiter.release(concurrencyKey);
+        });
+
         return handleStreaming(reply, backend, body, context, result.mode);
       }
 
@@ -113,6 +189,12 @@ export async function chatCompletionsRoute(app: FastifyInstance) {
       return handleNonStreaming(reply, backend, body, context);
     },
   );
+}
+
+function setRateLimitHeaders(reply: FastifyReply, info: RateLimitInfo): void {
+  reply.header("X-RateLimit-Limit", String(info.limit));
+  reply.header("X-RateLimit-Remaining", String(info.remaining));
+  reply.header("X-RateLimit-Reset", String(Math.ceil(info.resetMs / 1000)));
 }
 
 async function handleNonStreaming(
@@ -173,6 +255,20 @@ async function handleStreaming(
   const requestId = reply.getHeader("X-Request-ID");
   if (requestId) {
     headers["X-Request-ID"] = String(requestId);
+  }
+
+  // Copy rate limit headers set by the preHandler hook.
+  // Hijacked responses bypass Fastify's normal header serialization,
+  // so we must include them in the raw writeHead() call.
+  for (const name of [
+    "X-RateLimit-Limit",
+    "X-RateLimit-Remaining",
+    "X-RateLimit-Reset",
+  ]) {
+    const value = reply.getHeader(name);
+    if (value) {
+      headers[name] = String(value);
+    }
   }
 
   // Tell Fastify we are taking over the response BEFORE writing to

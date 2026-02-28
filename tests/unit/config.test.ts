@@ -24,6 +24,10 @@ describe("config", () => {
     delete process.env.SESSION_TTL_MS;
     delete process.env.MAX_SESSION_AGE_MS;
     delete process.env.SESSION_CLEANUP_INTERVAL_MS;
+    delete process.env.RATE_LIMIT_PER_IP;
+    delete process.env.RATE_LIMIT_PER_SESSION;
+    delete process.env.MAX_CONCURRENT_PER_KEY;
+    delete process.env.RATE_LIMIT_WINDOW_MS;
     delete process.env.OPENAI_API_KEY;
     delete process.env.OPENAI_BASE_URL;
     delete process.env.OPENAI_PASSTHROUGH_ENABLED;
@@ -54,6 +58,10 @@ describe("config", () => {
       expect(config.sessionTtlMs).toBe(3_600_000);
       expect(config.maxSessionAgeMs).toBe(86_400_000);
       expect(config.sessionCleanupIntervalMs).toBe(60_000);
+      expect(config.rateLimitPerIp).toBe(60);
+      expect(config.rateLimitPerSession).toBe(10);
+      expect(config.maxConcurrentPerKey).toBe(5);
+      expect(config.rateLimitWindowMs).toBe(60_000);
       expect(config.openaiApiKey).toBe("");
       expect(config.openaiBaseUrl).toBe("https://api.openai.com/v1");
       expect(config.openaiPassthroughEnabled).toBe(true);
@@ -132,6 +140,18 @@ describe("config", () => {
       process.env.ALLOW_CLIENT_OPENAI_KEY = "false";
       const config = loadConfig();
       expect(config.allowClientOpenaiKey).toBe(false);
+    });
+
+    it("reads rate limit values from environment", () => {
+      process.env.RATE_LIMIT_PER_IP = "120";
+      process.env.RATE_LIMIT_PER_SESSION = "20";
+      process.env.MAX_CONCURRENT_PER_KEY = "10";
+      process.env.RATE_LIMIT_WINDOW_MS = "120000";
+      const config = loadConfig();
+      expect(config.rateLimitPerIp).toBe(120);
+      expect(config.rateLimitPerSession).toBe(20);
+      expect(config.maxConcurrentPerKey).toBe(10);
+      expect(config.rateLimitWindowMs).toBe(120_000);
     });
   });
 
@@ -250,6 +270,66 @@ describe("config", () => {
     it("rejects invalid boolean ALLOW_CLIENT_OPENAI_KEY", () => {
       process.env.ALLOW_CLIENT_OPENAI_KEY = "yes";
       expect(() => loadConfig()).toThrow(/ALLOW_CLIENT_OPENAI_KEY/);
+    });
+
+    it("rejects RATE_LIMIT_PER_IP of 0", () => {
+      process.env.RATE_LIMIT_PER_IP = "0";
+      expect(() => loadConfig()).toThrow(/RATE_LIMIT_PER_IP/);
+    });
+
+    it("rejects negative RATE_LIMIT_PER_IP", () => {
+      process.env.RATE_LIMIT_PER_IP = "-1";
+      expect(() => loadConfig()).toThrow(/RATE_LIMIT_PER_IP/);
+    });
+
+    it("rejects non-numeric RATE_LIMIT_PER_IP", () => {
+      process.env.RATE_LIMIT_PER_IP = "fast";
+      expect(() => loadConfig()).toThrow(/RATE_LIMIT_PER_IP/);
+    });
+
+    it("rejects RATE_LIMIT_PER_SESSION of 0", () => {
+      process.env.RATE_LIMIT_PER_SESSION = "0";
+      expect(() => loadConfig()).toThrow(/RATE_LIMIT_PER_SESSION/);
+    });
+
+    it("rejects negative RATE_LIMIT_PER_SESSION", () => {
+      process.env.RATE_LIMIT_PER_SESSION = "-1";
+      expect(() => loadConfig()).toThrow(/RATE_LIMIT_PER_SESSION/);
+    });
+
+    it("rejects non-numeric RATE_LIMIT_PER_SESSION", () => {
+      process.env.RATE_LIMIT_PER_SESSION = "slow";
+      expect(() => loadConfig()).toThrow(/RATE_LIMIT_PER_SESSION/);
+    });
+
+    it("rejects MAX_CONCURRENT_PER_KEY of 0", () => {
+      process.env.MAX_CONCURRENT_PER_KEY = "0";
+      expect(() => loadConfig()).toThrow(/MAX_CONCURRENT_PER_KEY/);
+    });
+
+    it("rejects negative MAX_CONCURRENT_PER_KEY", () => {
+      process.env.MAX_CONCURRENT_PER_KEY = "-1";
+      expect(() => loadConfig()).toThrow(/MAX_CONCURRENT_PER_KEY/);
+    });
+
+    it("rejects non-numeric MAX_CONCURRENT_PER_KEY", () => {
+      process.env.MAX_CONCURRENT_PER_KEY = "abc";
+      expect(() => loadConfig()).toThrow(/MAX_CONCURRENT_PER_KEY/);
+    });
+
+    it("rejects RATE_LIMIT_WINDOW_MS below 1000", () => {
+      process.env.RATE_LIMIT_WINDOW_MS = "999";
+      expect(() => loadConfig()).toThrow(/RATE_LIMIT_WINDOW_MS/);
+    });
+
+    it("rejects RATE_LIMIT_WINDOW_MS of 0", () => {
+      process.env.RATE_LIMIT_WINDOW_MS = "0";
+      expect(() => loadConfig()).toThrow(/RATE_LIMIT_WINDOW_MS/);
+    });
+
+    it("rejects non-numeric RATE_LIMIT_WINDOW_MS", () => {
+      process.env.RATE_LIMIT_WINDOW_MS = "forever";
+      expect(() => loadConfig()).toThrow(/RATE_LIMIT_WINDOW_MS/);
     });
   });
 });
