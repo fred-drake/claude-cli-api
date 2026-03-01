@@ -6,6 +6,7 @@ import type {
   ClaudeCliStreamEvent,
   ClaudeCliSystemMessage,
 } from "../types/claude-cli.js";
+import { redactSecrets } from "../utils/secret-scanner.js";
 
 /**
  * Buffers raw stdout data and emits complete NDJSON lines.
@@ -83,7 +84,7 @@ export class StreamAdapter {
     if (parsed.type === "result") {
       const result = parsed as ClaudeCliResult;
       if (result.is_error) {
-        this.handleError(result.result, callbacks);
+        this.handleError(redactSecrets(result.result), callbacks);
         return;
       }
       this.sessionId = result.session_id;
@@ -123,7 +124,10 @@ export class StreamAdapter {
           if (event.delta.type === "text_delta") {
             callbacks.onChunk(
               JSON.stringify(
-                this.buildChunk({ content: event.delta.text }, null),
+                this.buildChunk(
+                  { content: redactSecrets(event.delta.text) },
+                  null,
+                ),
               ),
             );
           }

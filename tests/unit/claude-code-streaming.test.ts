@@ -3,7 +3,9 @@ import type { RequestContext } from "../../src/backends/types.js";
 import { ClaudeCodeBackend } from "../../src/backends/claude-code.js";
 import type { ClaudeCodeOptions } from "../../src/backends/claude-code.js";
 import { SessionManager } from "../../src/services/session-manager.js";
+import { ProcessPool } from "../../src/services/process-pool.js";
 import type { ChatCompletionChunk } from "../../src/types/openai.js";
+import { STDIN_PROMPT_THRESHOLD } from "../../src/services/claude-cli.js";
 import {
   sampleNdjsonStream,
   sampleStreamRequest,
@@ -17,7 +19,19 @@ vi.mock("node:child_process", () => ({
 }));
 
 function defaultOptions(): ClaudeCodeOptions {
-  return { cliPath: "/usr/bin/claude", enabled: true };
+  return {
+    cliPath: "/usr/bin/claude",
+    enabled: true,
+    requestTimeoutMs: 300_000,
+  };
+}
+
+function defaultPool(): ProcessPool {
+  return new ProcessPool({
+    maxConcurrent: 10,
+    queueTimeoutMs: 5000,
+    shutdownTimeoutMs: 10_000,
+  });
 }
 
 function defaultSessionManager(): SessionManager {
@@ -43,14 +57,17 @@ function defaultContext(
 
 describe("ClaudeCodeBackend.completeStream()", () => {
   let sessionManager: SessionManager;
+  let pool: ProcessPool;
 
   beforeEach(() => {
     vi.clearAllMocks();
     sessionManager = defaultSessionManager();
+    pool = defaultPool();
   });
 
   afterEach(() => {
     sessionManager?.destroy();
+    pool?.destroy();
   });
 
   it("spawns CLI with --output-format stream-json", async () => {
@@ -60,7 +77,11 @@ describe("ClaudeCodeBackend.completeStream()", () => {
     const child = createStreamingMockChildProcess(sampleNdjsonStream);
     mockSpawn.mockReturnValueOnce(child as never);
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const { callbacks } = collectCallbacks();
 
     await backend.completeStream(
@@ -85,7 +106,11 @@ describe("ClaudeCodeBackend.completeStream()", () => {
     const child = createStreamingMockChildProcess(sampleNdjsonStream);
     mockSpawn.mockReturnValueOnce(child as never);
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const { callbacks, chunks, getDoneMetadata } = collectCallbacks();
 
     await backend.completeStream(
@@ -135,7 +160,11 @@ describe("ClaudeCodeBackend.completeStream()", () => {
     const child = createMockChildProcess({ exitCode: 1 });
     mockSpawn.mockReturnValueOnce(child as never);
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const { callbacks, chunks, getError, getDoneMetadata } = collectCallbacks();
 
     await backend.completeStream(
@@ -170,7 +199,11 @@ describe("ClaudeCodeBackend.completeStream()", () => {
     });
     mockSpawn.mockReturnValueOnce(child as never);
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const { callbacks, chunks, getError } = collectCallbacks();
 
     await backend.completeStream(
@@ -201,7 +234,11 @@ describe("ClaudeCodeBackend.completeStream()", () => {
       throw new Error("ENOENT: command not found");
     });
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const { callbacks, getError } = collectCallbacks();
 
     // Should resolve, not reject
@@ -222,7 +259,11 @@ describe("ClaudeCodeBackend.completeStream()", () => {
     const child = createStreamingMockChildProcess(sampleNdjsonStream);
     mockSpawn.mockReturnValueOnce(child as never);
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const { callbacks } = collectCallbacks();
 
     await backend.completeStream(
@@ -244,7 +285,11 @@ describe("ClaudeCodeBackend.completeStream()", () => {
     const child = createStreamingMockChildProcess(sampleNdjsonStream);
     mockSpawn.mockReturnValueOnce(child as never);
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const { callbacks } = collectCallbacks();
 
     // No sessionId → session manager creates a new session
@@ -265,7 +310,11 @@ describe("ClaudeCodeBackend.completeStream()", () => {
     const { spawn } = await import("node:child_process");
     const mockSpawn = vi.mocked(spawn);
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
 
     // First call creates the session
     const child1 = createStreamingMockChildProcess(sampleNdjsonStream);
@@ -305,7 +354,11 @@ describe("ClaudeCodeBackend.completeStream()", () => {
     const child = createStreamingMockChildProcess(sampleNdjsonStream);
     mockSpawn.mockReturnValueOnce(child as never);
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const { callbacks } = collectCallbacks();
 
     const requestWithSystem = {
@@ -335,7 +388,11 @@ describe("ClaudeCodeBackend.completeStream()", () => {
     const child = createStreamingMockChildProcess(sampleNdjsonStream);
     mockSpawn.mockReturnValueOnce(child as never);
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const { callbacks } = collectCallbacks();
 
     await backend.completeStream(
@@ -361,7 +418,11 @@ describe("ClaudeCodeBackend.completeStream()", () => {
     });
     mockSpawn.mockReturnValueOnce(child as never);
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const { callbacks, getError } = collectCallbacks();
 
     await backend.completeStream(
@@ -383,7 +444,11 @@ describe("ClaudeCodeBackend.completeStream()", () => {
     const child = createStreamingMockChildProcess([]);
     mockSpawn.mockReturnValueOnce(child as never);
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const { callbacks, getError } = collectCallbacks();
 
     const streamPromise = backend.completeStream(
@@ -391,6 +456,9 @@ describe("ClaudeCodeBackend.completeStream()", () => {
       defaultContext(),
       callbacks,
     );
+
+    // Allow async pool acquire + doCompleteStream setup to register listeners
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     // Emit an error event on the child process (e.g., EPERM)
     child.emit("error", new Error("spawn EPERM"));
@@ -411,7 +479,11 @@ describe("ClaudeCodeBackend.completeStream()", () => {
     mockSpawn.mockReturnValueOnce(child as never);
 
     const controller = new AbortController();
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const { callbacks, getDoneMetadata, getError } = collectCallbacks();
 
     const streamPromise = backend.completeStream(
@@ -440,7 +512,11 @@ describe("ClaudeCodeBackend.completeStream()", () => {
     const child = createStreamingMockChildProcess(sampleNdjsonStream);
     mockSpawn.mockReturnValueOnce(child as never);
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const { callbacks } = collectCallbacks();
 
     const requestWithMaxTokens = {
@@ -465,7 +541,11 @@ describe("ClaudeCodeBackend.completeStream()", () => {
     const child = createStreamingMockChildProcess(sampleNdjsonStream);
     mockSpawn.mockReturnValueOnce(child as never);
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const { callbacks } = collectCallbacks();
 
     await backend.completeStream(
@@ -485,7 +565,11 @@ describe("ClaudeCodeBackend.completeStream()", () => {
     const child = createStreamingMockChildProcess(sampleNdjsonStream);
     mockSpawn.mockReturnValueOnce(child as never);
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const { callbacks } = collectCallbacks();
 
     await backend.completeStream(
@@ -505,7 +589,11 @@ describe("ClaudeCodeBackend.completeStream()", () => {
     const child = createStreamingMockChildProcess(sampleNdjsonStream);
     mockSpawn.mockReturnValueOnce(child as never);
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const { callbacks } = collectCallbacks();
 
     await backend.completeStream(
@@ -527,7 +615,11 @@ describe("ClaudeCodeBackend.completeStream()", () => {
     const child = createStreamingMockChildProcess(sampleNdjsonStream);
     mockSpawn.mockReturnValueOnce(child as never);
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const { callbacks, getDoneMetadata } = collectCallbacks();
 
     await backend.completeStream(
@@ -545,7 +637,11 @@ describe("ClaudeCodeBackend.completeStream()", () => {
     const { spawn } = await import("node:child_process");
     const mockSpawn = vi.mocked(spawn);
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
 
     // First call creates
     const child1 = createStreamingMockChildProcess(sampleNdjsonStream);
@@ -580,7 +676,11 @@ describe("ClaudeCodeBackend.completeStream()", () => {
     const child = createMockChildProcess({ exitCode: 1 });
     mockSpawn.mockReturnValueOnce(child as never);
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const { callbacks } = collectCallbacks();
 
     await backend.completeStream(
@@ -607,7 +707,11 @@ describe("ClaudeCodeBackend.completeStream()", () => {
     const child = createStreamingMockChildProcess(sampleNdjsonStream);
     mockSpawn.mockReturnValueOnce(child as never);
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const { callbacks } = collectCallbacks();
 
     // No apiKey in context
@@ -631,7 +735,11 @@ describe("ClaudeCodeBackend.completeStream()", () => {
     const { spawn } = await import("node:child_process");
     const mockSpawn = vi.mocked(spawn);
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const { callbacks, getError } = collectCallbacks();
 
     const requestWithTools = {
@@ -651,7 +759,11 @@ describe("ClaudeCodeBackend.completeStream()", () => {
     const { spawn } = await import("node:child_process");
     const mockSpawn = vi.mocked(spawn);
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const { callbacks, getError } = collectCallbacks();
 
     const requestWithBadModel = {
@@ -675,7 +787,11 @@ describe("ClaudeCodeBackend.completeStream()", () => {
     const { spawn } = await import("node:child_process");
     const mockSpawn = vi.mocked(spawn);
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const { callbacks, getError } = collectCallbacks();
 
     const requestWithSystemOnly = {
@@ -696,7 +812,11 @@ describe("ClaudeCodeBackend.completeStream()", () => {
   });
 
   it("session error routes through onError callback", async () => {
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const { callbacks, getError } = collectCallbacks();
 
     // Try to resume a non-existent session
@@ -711,5 +831,39 @@ describe("ClaudeCodeBackend.completeStream()", () => {
     const error = getError();
     expect(error).toBeDefined();
     expect(error!.error.code).toBe("session_not_found");
+  });
+
+  it("sends large prompts via stdin instead of -p flag", async () => {
+    const { spawn } = await import("node:child_process");
+    const mockSpawn = vi.mocked(spawn);
+
+    const child = createStreamingMockChildProcess(sampleNdjsonStream);
+    // Spy on stdin.write to verify the prompt is written
+    const stdinWriteSpy = vi.fn();
+    child.stdin.write = stdinWriteSpy;
+    mockSpawn.mockReturnValueOnce(child as never);
+
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
+    const { callbacks } = collectCallbacks();
+
+    // Create a prompt larger than STDIN_PROMPT_THRESHOLD (128 KB)
+    const largePrompt = "x".repeat(STDIN_PROMPT_THRESHOLD + 1);
+    const largeRequest = {
+      ...sampleStreamRequest,
+      messages: [{ role: "user" as const, content: largePrompt }],
+    };
+
+    await backend.completeStream(largeRequest, defaultContext(), callbacks);
+
+    // Args should NOT contain -p
+    const args = mockSpawn.mock.calls[0]![1] as string[];
+    expect(args.indexOf("-p")).toBe(-1);
+
+    // Prompt should have been written to stdin
+    expect(stdinWriteSpy).toHaveBeenCalledWith(largePrompt);
   });
 });

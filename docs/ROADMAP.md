@@ -1,6 +1,6 @@
 # Roadmap
 
-Last Updated: 2026-02-26 | Version: 0.3.0
+Last Updated: 2026-02-28 | Version: 0.4.0
 
 ## Completed Epics
 
@@ -44,34 +44,47 @@ Fastify HTTP server integrating all components:
 - AbortController for client disconnect detection
 - 1 MB body limit
 
-## In Progress
+### Epic 8: Security & Authentication
+API key validation, rate limiting, key masking, HMAC-based keys.
 
-### Epic 4: Claude Code Non-Streaming
-Model mapper, request transformer, CLI spawning, response
-transformer for non-streaming `complete()`.
-
-## Planned
-
-### Epic 8: Auth Middleware
-API key validation, rate limiting.
-
-### Epic 9: Process Pool
-Concurrency management, graceful shutdown.
+### Epic 9: Process Management & Operational Readiness
+- `ProcessPool` — semaphore-based concurrency control with
+  acquire/release, wait queue with timeout, tracked child
+  processes, idempotent `drainAll()`, `destroy()` for cleanup
+- `killWithEscalation()` — SIGTERM → SIGKILL escalation with
+  unref'd timers for stuck process handling
+- Stderr size limiting (1 MB) in both `spawnCli()` and
+  direct `spawn()` streaming paths
+- `OutputLimitError` (502) for stderr/stdout limit violations
+- Secret scanner — regex-based credential redaction for
+  Anthropic keys, OpenAI keys, Bearer tokens, AWS keys,
+  PEM private key blocks in both streaming and non-streaming
+- Stderr sanitizer — strips file paths, env vars, stack traces
+  from error responses before sending to clients
+- Per-request timeout with `killWithEscalation` on expiry
+- Graceful shutdown — SIGTERM/SIGINT handlers, `drainAll()`,
+  503 rejection of new requests during shutdown
+- HTTP connection timeouts (headers, request, keep-alive)
+- Health endpoint reports live pool capacity
 
 ## Architecture
 
 ```
 Client → Fastify HTTP Server
-           ├── onRequest hooks (X-Request-ID, CORS)
+           ├── onRequest hooks (X-Request-ID, CORS, shutdown guard)
+           ├── onRequest hook: Auth middleware (API key validation)
+           ├── onRequest hook: Rate limiter
            ├── onSend hook (security headers)
            ├── Route Handler
            │     ├── Mode Router (header inspection)
            │     ├── Backend Selection
            │     │     ├── OpenAI Passthrough
            │     │     └── Claude Code
-           │     │          ├── Session Manager
-           │     │          ├── CLI Spawner
-           │     │          └── Stream Transformer
+           │     │          ├── Process Pool (acquire/release)
+           │     │          ├── Session Manager (lock/unlock)
+           │     │          ├── CLI Spawner (tracked, timeout)
+           │     │          ├── Stream Transformer
+           │     │          └── Secret Scanner (redaction)
            │     └── Response (JSON or SSE)
            └── Error Handler (OpenAI schema)
 ```

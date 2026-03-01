@@ -1,6 +1,48 @@
 # Version Log
 
-Last Updated: 2026-02-26
+Last Updated: 2026-02-28
+
+## v0.4.0 — Epic 9: Process Management & Operational Readiness (2026-02-28)
+
+### Added
+- `src/services/process-pool.ts` — ProcessPool with:
+  - Semaphore-based concurrency control (acquire/release)
+  - Wait queue with configurable timeout (429 on exhaustion)
+  - Child process tracking (track/untrack with auto-cleanup)
+  - Idempotent `drainAll()` — SIGTERM all, SIGKILL after timeout
+  - `destroy()` for Fastify onClose cleanup
+  - `killWithEscalation()` — SIGTERM → SIGKILL with unref'd timer
+- `src/utils/secret-scanner.ts` — `redactSecrets()` with patterns for:
+  - Anthropic keys (`sk-ant-*`), OpenAI keys (`sk-*`, 20+ chars)
+  - Bearer tokens, AWS access key IDs, PEM private key blocks
+- `src/utils/stderr-sanitizer.ts` — `sanitizeStderr()` strips file
+  paths, env variable values, and stack traces from error responses
+- `tests/unit/process-pool.test.ts` — 19 tests (pool lifecycle,
+  exhaustion, queue timeout, drainAll idempotency, killWithEscalation)
+- `tests/unit/secret-scanner.test.ts` — 9 tests (each pattern,
+  passthrough, short-match immunity, streaming integration)
+
+### Changed
+- `src/backends/claude-code.ts` — Major operational upgrades:
+  - ProcessPool as 3rd constructor parameter
+  - Pool acquire/release wrapping session lock (nested try/finally)
+  - Per-request timeout with `killWithEscalation` on expiry
+  - Process tracking via `processPool.track(child)`
+  - Stderr size limit in streaming path (1 MB)
+  - Sanitized stderr in all error responses
+- `src/services/claude-cli.ts`:
+  - `MAX_STDERR_SIZE` (1 MB) with enforcement in `spawnCli()`
+  - `onSpawn` callback for post-spawn process tracking
+- `src/server.ts` — ProcessPool instantiation, Fastify decoration,
+  shutdown guard onRequest hook (503 during shutdown), onClose cleanup
+- `src/index.ts` — Graceful shutdown (`gracefulShutdown()` exported),
+  SIGTERM/SIGINT handlers, HTTP connection timeouts (headers 65s,
+  request = CLI timeout + 10s, keep-alive 60s)
+- `src/types/fastify.d.ts` — `processPool: ProcessPool` declaration
+- `src/routes/health.ts` — Live pool capacity from `processPool.active`
+- `src/errors/handler.ts` — `OutputLimitError` class (502 status)
+- `src/transformers/response.ts` — `redactSecrets()` on CLI output
+- `src/transformers/stream.ts` — `redactSecrets()` on stream deltas
 
 ## v0.3.0 — Epics 6 & 7: Session Management + HTTP Server (2026-02-26)
 

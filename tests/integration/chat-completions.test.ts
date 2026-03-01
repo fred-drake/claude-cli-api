@@ -959,6 +959,37 @@ describe("POST /v1/chat/completions", () => {
     });
   });
 
+  describe("shutdown guard", () => {
+    let app: FastifyInstance;
+
+    beforeAll(async () => {
+      app = createTestApp();
+      await app.ready();
+    });
+
+    afterAll(async () => {
+      await app.close();
+    });
+
+    it("returns 503 with server_shutting_down after drainAll()", async () => {
+      // drainAll() resolves immediately when there are no tracked children,
+      // but leaves isShuttingDown = true.
+      await app.processPool.drainAll();
+
+      const response = await injectRequest(app, {
+        url: "/v1/chat/completions",
+        payload: sampleChatRequest,
+      });
+
+      expect(response.statusCode).toBe(503);
+      expectOpenAIError(response.json(), {
+        type: "server_error",
+        code: "server_shutting_down",
+        message: "Server is shutting down",
+      });
+    });
+  });
+
   describe("404 unknown routes", () => {
     let app: FastifyInstance;
 

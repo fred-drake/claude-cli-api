@@ -5,11 +5,13 @@ import type {
   SlidingWindowRateLimiter,
   ConcurrencyLimiter,
 } from "../middleware/rate-limiter.js";
+import type { ProcessPool } from "../services/process-pool.js";
 
 declare module "fastify" {
   interface FastifyInstance {
     config: Readonly<ServerConfig>;
     sessionManager: SessionManager;
+    processPool: ProcessPool;
     claudeCodeBackend: CompletionBackend;
     openaiPassthroughBackend: CompletionBackend;
     ipRateLimiter: SlidingWindowRateLimiter;

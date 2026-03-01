@@ -8,8 +8,9 @@ import { chatCompletionsRoute } from "./routes/chat-completions.js";
 import { SessionManager } from "./services/session-manager.js";
 import { OpenAIPassthroughBackend } from "./backends/openai-passthrough.js";
 import { ClaudeCodeBackend } from "./backends/claude-code.js";
-import { registerErrorHandler } from "./errors/handler.js";
+import { registerErrorHandler, buildOpenAIError } from "./errors/handler.js";
 import { isValidRequestId, SECURITY_HEADER_ENTRIES } from "./utils/headers.js";
+import { ProcessPool } from "./services/process-pool.js";
 import {
   SlidingWindowRateLimiter,
   ConcurrencyLimiter,
@@ -61,6 +62,15 @@ export function createServer(config: ServerConfig): FastifyInstance {
   app.decorate("sessionManager", sessionManager);
   app.addHook("onClose", () => sessionManager.destroy());
 
+  // --- Process pool ---
+  const processPool = new ProcessPool({
+    maxConcurrent: config.maxConcurrentProcesses,
+    queueTimeoutMs: config.poolQueueTimeoutMs,
+    shutdownTimeoutMs: config.shutdownTimeoutMs,
+  });
+  app.decorate("processPool", processPool);
+  app.addHook("onClose", () => processPool.destroy());
+
   // --- Backend instantiation ---
   const openaiPassthroughBackend = new OpenAIPassthroughBackend({
     apiKey: config.openaiApiKey,
@@ -74,8 +84,10 @@ export function createServer(config: ServerConfig): FastifyInstance {
     {
       cliPath: config.claudePath,
       enabled: true,
+      requestTimeoutMs: config.requestTimeoutMs,
     },
     sessionManager,
+    processPool,
   );
   app.decorate("claudeCodeBackend", claudeCodeBackend);
 
@@ -104,6 +116,25 @@ export function createServer(config: ServerConfig): FastifyInstance {
     ipRateLimiter.destroy();
     sessionRateLimiter.destroy();
     concurrencyLimiter.destroy();
+  });
+
+  // --- Shutdown guard hook ---
+  // Reject new requests while the server is draining active processes.
+  app.addHook("onRequest", (_request, reply, done) => {
+    if (processPool.isShuttingDown) {
+      reply
+        .status(503)
+        .send(
+          buildOpenAIError(
+            "Server is shutting down",
+            "server_error",
+            "server_shutting_down",
+          ),
+        );
+      done();
+      return;
+    }
+    done();
   });
 
   // --- Request ID hook (Task 7.7) ---

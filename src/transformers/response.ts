@@ -1,5 +1,6 @@
 import type { ClaudeCliResult } from "../types/claude-cli.js";
 import type { ChatCompletionResponse, OpenAIError } from "../types/openai.js";
+import { redactSecrets } from "../utils/secret-scanner.js";
 
 export interface TransformSuccess {
   status: number;
@@ -31,7 +32,9 @@ export function transformCliResult(
       status: 500,
       error: {
         error: {
-          message: cliResult.result || "An error occurred during execution",
+          message:
+            redactSecrets(cliResult.result) ||
+            "An error occurred during execution",
           type: "server_error",
           param: null,
           code: "backend_error",
@@ -51,7 +54,7 @@ export function transformCliResult(
         index: 0,
         message: {
           role: "assistant",
-          content: cliResult.result,
+          content: redactSecrets(cliResult.result),
         },
         finish_reason: "stop",
       },

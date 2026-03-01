@@ -19,10 +19,10 @@ export async function healthRoute(app: FastifyInstance) {
     const anthropicKeyStatus =
       app.config.anthropicApiKey !== "" ? "ok" : "missing";
 
-    // Capacity stub — actual tracking deferred to Epic 9 (process pool)
     const capacity = {
-      active: 0,
+      active: app.processPool.active,
       max: app.config.maxConcurrentProcesses,
+      queued: app.processPool.queued,
     };
 
     // At least one backend must be functional for 200

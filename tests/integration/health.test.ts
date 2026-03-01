@@ -43,7 +43,7 @@ describe("GET /health", () => {
     expect(body.version).toMatch(/^\d+\.\d+\.\d+$/);
   });
 
-  it("returns capacity with active and max", async () => {
+  it("returns capacity with active, max, and queued", async () => {
     const response = await app.inject({
       method: "GET",
       url: "/health",
@@ -52,8 +52,10 @@ describe("GET /health", () => {
     const body = response.json();
     expect(body.checks.capacity).toHaveProperty("active");
     expect(body.checks.capacity).toHaveProperty("max");
+    expect(body.checks.capacity).toHaveProperty("queued");
     expect(typeof body.checks.capacity.active).toBe("number");
     expect(typeof body.checks.capacity.max).toBe("number");
+    expect(typeof body.checks.capacity.queued).toBe("number");
   });
 
   it("includes security headers", async () => {
