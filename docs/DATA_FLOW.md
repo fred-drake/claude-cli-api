@@ -1,14 +1,17 @@
 # Data Flow
 
-Last Updated: 2026-02-26 | Version: 0.3.0
+Last Updated: 2026-02-28 | Version: 0.4.0
 
 ## HTTP Request Lifecycle
 
 ```
 Client HTTP Request
   │
+  ├── onRequest hook: Shutdown guard (503 if draining)
   ├── onRequest hook: X-Request-ID (echo or generate UUID)
   ├── onRequest hook: CORS (if origin in allowlist)
+  ├── onRequest hook: Auth middleware (API key validation)
+  ├── onRequest hook: Rate limiter
   │
   ▼
 Route Handler (POST /v1/chat/completions)
@@ -45,6 +48,61 @@ Route Handler (POST /v1/chat/completions)
 onSend hook: Security headers (nosniff, no-store, DENY, CSP)
 ```
 
+## Claude Code Backend — Process Lifecycle
+
+```
+backend.complete() / backend.completeStream()
+  │
+  ├── 1. Validate params, map model, build prompt
+  │
+  ├── 2. Resolve session (SessionManager)
+  │
+  ├── 3. processPool.acquire()
+  │     ├── Below max → increment, proceed
+  │     ├── At max → queue with timeout
+  │     │     ├── Waiter woken → proceed
+  │     │     └── Timeout → 429 capacity_exceeded
+  │     └── Shutting down → reject immediately
+  │
+  ├── 4. sessionManager.acquireLock(sessionId)
+  │
+  ├── 5. Spawn CLI (spawnCli or direct spawn)
+  │     ├── processPool.track(child)
+  │     ├── Per-request timeout → killWithEscalation(child)
+  │     └── Secret redaction on output (redactSecrets)
+  │
+  ├── 6. Process result / stream events
+  │     └── Sanitize stderr in error responses
+  │
+  └── finally:
+        ├── sessionManager.releaseLock(sessionId)
+        └── processPool.release()
+              └── Wake next queued waiter (if any)
+```
+
+## Graceful Shutdown
+
+```
+SIGTERM / SIGINT
+  │
+  ├── shutdownInProgress guard (prevent double-drain)
+  │
+  ├── processPool.drainAll()
+  │     ├── Set isShuttingDown flag
+  │     ├── Reject all queued waiters
+  │     ├── SIGTERM all tracked child processes
+  │     ├── Wait shutdownTimeoutMs
+  │     └── SIGKILL any survivors
+  │
+  ├── app.close() (Fastify graceful close)
+  │
+  └── process.exit(0)
+
+New requests during shutdown:
+  onRequest hook → processPool.isShuttingDown?
+    → 503 server_shutting_down
+```
+
 ## Error Handler Flow
 
 ```
@@ -56,6 +114,7 @@ mapErrorToResponse(err)
   ├── SessionError      → preserve status + body
   ├── ModeRouterError   → 400, enrich to OpenAI schema
   ├── ApiError          → preserve status + body
+  ├── OutputLimitError  → 502 output_limit_exceeded
   ├── FST_ERR_CTP_INVALID_MEDIA_TYPE → 415
   ├── FST_ERR_CTP_BODY_TOO_LARGE    → 413
   ├── Fastify 400 errors             → 400
@@ -82,7 +141,7 @@ GET /health
       claude_cli: "ok"|"error"|"disabled"|"missing"|"no_key",
       anthropic_key: "ok"|"missing",
       openai_passthrough: "ok"|"error"|"disabled"|"missing"|"no_key",
-      capacity: { active: 0, max: N }
+      capacity: { active: processPool.active, max: N }
     }
   }
   → 200 if any backend ok, 503 if none
@@ -99,9 +158,11 @@ Mode Router → selects ClaudeCodeBackend
   ▼
 ClaudeCodeBackend.completeStream()
   │
-  ├── 1. Build CLI args (--output-format stream-json, -p prompt)
-  ├── 2. Spawn child_process with sanitized env
-  ├── 3. Wire AbortSignal → child.kill("SIGTERM")
+  ├── 1. processPool.acquire() → session lock
+  ├── 2. Build CLI args (--output-format stream-json, -p prompt)
+  ├── 3. Spawn child_process with sanitized env
+  ├── 4. processPool.track(child) + per-request timeout
+  ├── 5. Wire AbortSignal → child.kill("SIGTERM")
   │
   ▼
 stdout (NDJSON lines) ──► NdjsonLineBuffer.feed()
@@ -120,7 +181,7 @@ stdout (NDJSON lines) ──► NdjsonLineBuffer.feed()
   │                    │ content_block  → skip         │
   │                    │   _start (2+)                 │
   │                    │ content_block  → content chunk│
-  │                    │   _delta                      │
+  │                    │   _delta         (redacted)   │
   │                    │ content_block  → skip         │
   │                    │   _stop                       │
   │                    │ message_delta  → finish chunk │

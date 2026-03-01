@@ -3,6 +3,7 @@ import {
   spawnCli,
   STDIN_PROMPT_THRESHOLD,
   MAX_STDOUT_SIZE,
+  MAX_STDERR_SIZE,
 } from "../../src/services/claude-cli.js";
 import { createMockChildProcess } from "../helpers/spawn.js";
 
@@ -172,5 +173,20 @@ describe("spawnCli()", () => {
 
   it("exports MAX_STDOUT_SIZE constant", () => {
     expect(MAX_STDOUT_SIZE).toBe(10 * 1024 * 1024);
+  });
+
+  it("rejects when stderr exceeds MAX_STDERR_SIZE", async () => {
+    const { spawn } = await import("node:child_process");
+    const mockSpawn = vi.mocked(spawn);
+
+    const bigStderr = "E".repeat(MAX_STDERR_SIZE + 1);
+    const child = createMockChildProcess({ stderr: bigStderr });
+    mockSpawn.mockReturnValueOnce(child as never);
+
+    await expect(spawnCli(defaultOptions)).rejects.toThrow("stderr exceeded");
+  });
+
+  it("exports MAX_STDERR_SIZE constant", () => {
+    expect(MAX_STDERR_SIZE).toBe(1 * 1024 * 1024);
   });
 });

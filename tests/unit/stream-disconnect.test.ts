@@ -3,6 +3,7 @@ import type { RequestContext } from "../../src/backends/types.js";
 import { ClaudeCodeBackend } from "../../src/backends/claude-code.js";
 import type { ClaudeCodeOptions } from "../../src/backends/claude-code.js";
 import { SessionManager } from "../../src/services/session-manager.js";
+import { ProcessPool } from "../../src/services/process-pool.js";
 import {
   sampleNdjsonStream,
   sampleStreamRequest,
@@ -15,7 +16,19 @@ vi.mock("node:child_process", () => ({
 }));
 
 function defaultOptions(): ClaudeCodeOptions {
-  return { cliPath: "/usr/bin/claude", enabled: true };
+  return {
+    cliPath: "/usr/bin/claude",
+    enabled: true,
+    requestTimeoutMs: 300_000,
+  };
+}
+
+function defaultPool(): ProcessPool {
+  return new ProcessPool({
+    maxConcurrent: 5,
+    queueTimeoutMs: 30_000,
+    shutdownTimeoutMs: 10_000,
+  });
 }
 
 function defaultSessionManager(): SessionManager {
@@ -41,13 +54,16 @@ function defaultContext(
 
 describe("client disconnect → SIGTERM", () => {
   let sessionManager: SessionManager;
+  let pool: ProcessPool;
 
   beforeEach(() => {
     vi.clearAllMocks();
     sessionManager = defaultSessionManager();
+    pool = defaultPool();
   });
 
   afterEach(() => {
+    pool?.destroy();
     sessionManager?.destroy();
   });
 
@@ -55,11 +71,18 @@ describe("client disconnect → SIGTERM", () => {
     const { spawn } = await import("node:child_process");
     const mockSpawn = vi.mocked(spawn);
 
-    const child = createStreamingMockChildProcess(sampleNdjsonStream);
+    // Use lineDelay so the mock child stays alive long enough for us to abort
+    const child = createStreamingMockChildProcess(sampleNdjsonStream, {
+      lineDelay: 100,
+    });
     mockSpawn.mockReturnValueOnce(child as never);
 
     const controller = new AbortController();
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const { callbacks } = collectCallbacks();
 
     const streamPromise = backend.completeStream(
@@ -68,7 +91,10 @@ describe("client disconnect → SIGTERM", () => {
       callbacks,
     );
 
-    // Abort immediately — triggers SIGTERM
+    // Allow async pool acquire + doCompleteStream setup to register listeners
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Abort — triggers SIGTERM before the mock finishes emitting lines
     controller.abort();
 
     await streamPromise;
@@ -84,7 +110,11 @@ describe("client disconnect → SIGTERM", () => {
     mockSpawn.mockReturnValueOnce(child as never);
 
     const controller = new AbortController();
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const { callbacks } = collectCallbacks();
 
     // Wait for stream to complete normally
@@ -114,7 +144,11 @@ describe("client disconnect → SIGTERM", () => {
       "removeEventListener",
     );
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const { callbacks } = collectCallbacks();
 
     await backend.completeStream(
@@ -136,7 +170,11 @@ describe("client disconnect → SIGTERM", () => {
     const child = createStreamingMockChildProcess(sampleNdjsonStream);
     mockSpawn.mockReturnValueOnce(child as never);
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const { callbacks, getDoneMetadata } = collectCallbacks();
 
     await backend.completeStream(

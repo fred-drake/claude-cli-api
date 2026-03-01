@@ -26,6 +26,19 @@ export class ModeRouterError extends Error {
 }
 
 /**
+ * Typed error for CLI output size limit violations.
+ * Thrown when stdout or stderr exceeds the configured maximum.
+ */
+export class OutputLimitError extends Error {
+  readonly status = 502;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "OutputLimitError";
+  }
+}
+
+/**
  * Generic API error that carries an OpenAI-compatible error body.
  * Used by route handlers and middleware to throw errors that the
  * centralized error handler can format consistently.
@@ -90,6 +103,18 @@ export function mapErrorToResponse(err: Error | FastifyError): {
   // unsupported params, etc.).
   if (err instanceof ApiError) {
     return { status: err.status, body: err.body };
+  }
+
+  // OutputLimitError: CLI stdout/stderr exceeded size limit.
+  if (err instanceof OutputLimitError) {
+    return {
+      status: 502,
+      body: buildOpenAIError(
+        err.message,
+        "server_error",
+        "output_limit_exceeded",
+      ),
+    };
   }
 
   // Fastify-native errors: content-type and body limit.

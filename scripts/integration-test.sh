@@ -237,6 +237,18 @@ test_health() {
 }
 run_test "Health returns 200 with status ready" test_health
 
+# Test 1b: Health includes capacity with active/max/queued
+test_health_capacity() {
+  do_request GET /health
+  assert_status 200 || return 1
+  assert_json_exists '.checks.capacity.active' || return 1
+  assert_json_exists '.checks.capacity.max' || return 1
+  assert_json_exists '.checks.capacity.queued' || return 1
+  assert_json '.checks.capacity.active' '0' || return 1
+  assert_json '.checks.capacity.queued' '0'
+}
+run_test "Health capacity includes active, max, queued" test_health_capacity
+
 # Test 2: GET /v1/models returns 3 models
 test_models() {
   do_request GET /v1/models

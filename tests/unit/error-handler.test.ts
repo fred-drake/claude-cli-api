@@ -3,6 +3,7 @@ import {
   mapErrorToResponse,
   ModeRouterError,
   ApiError,
+  OutputLimitError,
 } from "../../src/errors/handler.js";
 import { PassthroughError } from "../../src/backends/openai-passthrough.js";
 import { SessionError } from "../../src/services/session-manager.js";
@@ -144,6 +145,22 @@ describe("error-handler", () => {
       expect(result.body.error.code).toBe("unsupported_parameter");
     });
 
+    // --- OutputLimitError ---
+    it("maps OutputLimitError to 502 with output_limit_exceeded code", () => {
+      const err = new OutputLimitError(
+        "CLI stdout exceeded maximum size of 10 MB",
+      );
+      const result = mapErrorToResponse(err);
+
+      expect(result.status).toBe(502);
+      expect(result.body.error.type).toBe("server_error");
+      expect(result.body.error.code).toBe("output_limit_exceeded");
+      expect(result.body.error.message).toBe(
+        "CLI stdout exceeded maximum size of 10 MB",
+      );
+      expect(result.body.error.param).toBeNull();
+    });
+
     // --- Fastify-native errors ---
     it("maps FST_ERR_CTP_INVALID_MEDIA_TYPE to 415", () => {
       const err = new Error("Unsupported Media Type") as Error & {
@@ -267,6 +284,7 @@ describe("error-handler", () => {
         new SessionError(429, buildOpenAIError("msg", "type", "code", null)),
         new ModeRouterError("msg", "code"),
         new ApiError(400, buildOpenAIError("msg", "type", "code", "param")),
+        new OutputLimitError("output too large"),
         Object.assign(new Error("fastify"), {
           code: "FST_ERR_CTP_INVALID_MEDIA_TYPE",
           statusCode: 415,

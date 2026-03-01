@@ -28,21 +28,53 @@ import {
   transformCliResult,
   detectAuthFailure,
 } from "../transformers/response.js";
-import { spawnCli, STDIN_PROMPT_THRESHOLD } from "../services/claude-cli.js";
+import {
+  spawnCli,
+  deliverStdin,
+  STDIN_PROMPT_THRESHOLD,
+  MAX_STDERR_SIZE,
+  STDERR_LIMIT_MSG,
+} from "../services/claude-cli.js";
+import { ProcessPool, killWithEscalation } from "../services/process-pool.js";
+import { sanitizeStderr } from "../utils/stderr-sanitizer.js";
 
 export interface ClaudeCodeOptions {
   cliPath: string;
   enabled: boolean;
+  requestTimeoutMs: number;
 }
+
+function formatCliExitReason(exitCode: number | null, stderr: string): string {
+  const sanitized = sanitizeStderr(stderr);
+  return sanitized
+    ? `CLI process exited with code ${exitCode}: ${sanitized}`
+    : `CLI process exited with code ${exitCode}`;
+}
+
+const CAPACITY_EXCEEDED_ERROR = {
+  error: {
+    message:
+      "Too many concurrent requests — server at capacity, try again later",
+    type: "server_error" as const,
+    param: null,
+    code: "capacity_exceeded" as const,
+  },
+};
 
 export class ClaudeCodeBackend implements CompletionBackend {
   readonly name: BackendMode = "claude-code";
   private readonly options: ClaudeCodeOptions;
   private readonly sessionManager: SessionManager;
+  private readonly processPool: ProcessPool;
 
-  constructor(options: ClaudeCodeOptions, sessionManager: SessionManager) {
+  constructor(
+    options: ClaudeCodeOptions,
+    sessionManager: SessionManager,
+    processPool: ProcessPool,
+  ) {
     this.options = options;
     this.sessionManager = sessionManager;
+    this.processPool = processPool;
   }
 
   async complete(
@@ -51,7 +83,7 @@ export class ClaudeCodeBackend implements CompletionBackend {
   ): Promise<BackendResult> {
     const created = Math.floor(Date.now() / 1000);
 
-    // Phase 1 — Pre-lock (validation, may throw freely)
+    // Phase 1 — Pre-lock validation (may throw freely)
 
     // 1. Validate params (Tier 3 rejection, Tier 2 collection)
     const validation = validateParams(request);
@@ -91,109 +123,135 @@ export class ClaudeCodeBackend implements CompletionBackend {
       request.model,
     );
 
-    // 5. Acquire lock
-    this.sessionManager.acquireLock(sessionResult.sessionId);
-
-    // Phase 2 — Post-lock (try/finally, lock always released)
+    // 5. Acquire pool slot (before session lock to avoid holding lock while queued)
     try {
-      // 6. Build CLI args
-      const useStdin =
-        Buffer.byteLength(promptResult.prompt, "utf8") > STDIN_PROMPT_THRESHOLD;
-      const args = buildCliArgs({
-        outputFormat: "json",
-        prompt: promptResult.prompt,
-        systemPrompt: promptResult.systemPrompt,
-        resolvedModel,
-        sessionId: sessionResult.sessionId,
-        sessionAction: sessionResult.action,
-        useStdin,
-      });
+      await this.processPool.acquire();
+    } catch {
+      throw new ApiError(429, CAPACITY_EXCEEDED_ERROR);
+    }
 
-      // 7. Spawn CLI
-      const cliResult = await spawnCli({
-        cliPath: this.options.cliPath,
-        args,
-        env: buildSanitizedEnv(),
-        prompt: useStdin ? promptResult.prompt : undefined,
-        useStdin,
-        signal: context.signal,
-      });
+    try {
+      // 6. Acquire session lock
+      this.sessionManager.acquireLock(sessionResult.sessionId);
 
-      // Handle non-zero exit
-      if (cliResult.exitCode !== 0 && cliResult.exitCode !== null) {
-        // Check for auth failure
-        if (detectAuthFailure(cliResult.stderr)) {
-          throw new ApiError(401, {
+      try {
+        // 7. Build CLI args
+        const useStdin =
+          Buffer.byteLength(promptResult.prompt, "utf8") >
+          STDIN_PROMPT_THRESHOLD;
+        const args = buildCliArgs({
+          outputFormat: "json",
+          prompt: promptResult.prompt,
+          systemPrompt: promptResult.systemPrompt,
+          resolvedModel,
+          sessionId: sessionResult.sessionId,
+          sessionAction: sessionResult.action,
+          useStdin,
+        });
+
+        // 8. Spawn CLI with per-request timeout and process tracking
+        let requestTimer: ReturnType<typeof setTimeout> | undefined;
+
+        const cliResult = await spawnCli({
+          cliPath: this.options.cliPath,
+          args,
+          env: buildSanitizedEnv(),
+          prompt: useStdin ? promptResult.prompt : undefined,
+          useStdin,
+          signal: context.signal,
+          onSpawn: (child) => {
+            this.processPool.track(child);
+
+            // Per-request timeout: kill child if it runs too long
+            requestTimer = setTimeout(() => {
+              killWithEscalation(child);
+            }, this.options.requestTimeoutMs);
+            requestTimer.unref();
+          },
+        });
+
+        // Clear per-request timeout on normal completion
+        if (requestTimer) clearTimeout(requestTimer);
+
+        // Handle non-zero exit
+        if (cliResult.exitCode !== 0 && cliResult.exitCode !== null) {
+          // Check for auth failure
+          if (detectAuthFailure(cliResult.stderr)) {
+            throw new ApiError(401, {
+              error: {
+                message: "Authentication failed. Check your ANTHROPIC_API_KEY.",
+                type: "invalid_request_error",
+                param: null,
+                code: "invalid_api_key",
+              },
+            });
+          }
+
+          const reason = formatCliExitReason(
+            cliResult.exitCode,
+            cliResult.stderr,
+          );
+          throw new ApiError(500, {
             error: {
-              message: "Authentication failed. Check your ANTHROPIC_API_KEY.",
-              type: "invalid_request_error",
+              message: reason,
+              type: "server_error",
               param: null,
-              code: "invalid_api_key",
+              code: "backend_error",
             },
           });
         }
 
-        const reason = cliResult.stderr.trim()
-          ? `CLI process exited with code ${cliResult.exitCode}: ${cliResult.stderr.trim()}`
-          : `CLI process exited with code ${cliResult.exitCode}`;
-        throw new ApiError(500, {
-          error: {
-            message: reason,
-            type: "server_error",
-            param: null,
-            code: "backend_error",
-          },
-        });
+        // 9. Parse JSON stdout
+        let parsed: ClaudeCliResult;
+        try {
+          parsed = JSON.parse(cliResult.stdout) as ClaudeCliResult;
+        } catch {
+          throw new ApiError(500, {
+            error: {
+              message: "Failed to parse CLI output as JSON",
+              type: "server_error",
+              param: null,
+              code: "backend_error",
+            },
+          });
+        }
+
+        // 10. Transform CLI result
+        const transformed = transformCliResult(
+          parsed,
+          request.model,
+          context.requestId,
+          created,
+        );
+
+        if ("error" in transformed) {
+          throw new ApiError(transformed.status, transformed.error);
+        }
+
+        // 11. Assemble headers
+        const headers: Record<string, string> = {
+          ...transformed.headers,
+          "X-Claude-Session-ID": sessionResult.sessionId,
+        };
+
+        if (sessionResult.action === "created") {
+          headers["X-Claude-Session-Created"] = "true";
+        }
+
+        if (ignoredParams.length > 0) {
+          headers["X-Claude-Ignored-Params"] = ignoredParams.join(", ");
+        }
+
+        // 12. Return BackendResult
+        return {
+          response: transformed.response,
+          headers,
+        };
+      } finally {
+        this.sessionManager.releaseLock(sessionResult.sessionId);
       }
-
-      // 8. Parse JSON stdout
-      let parsed: ClaudeCliResult;
-      try {
-        parsed = JSON.parse(cliResult.stdout) as ClaudeCliResult;
-      } catch {
-        throw new ApiError(500, {
-          error: {
-            message: "Failed to parse CLI output as JSON",
-            type: "server_error",
-            param: null,
-            code: "backend_error",
-          },
-        });
-      }
-
-      // 9. Transform CLI result
-      const transformed = transformCliResult(
-        parsed,
-        request.model,
-        context.requestId,
-        created,
-      );
-
-      if ("error" in transformed) {
-        throw new ApiError(transformed.status, transformed.error);
-      }
-
-      // 10. Assemble headers
-      const headers: Record<string, string> = {
-        ...transformed.headers,
-        "X-Claude-Session-ID": sessionResult.sessionId,
-      };
-
-      if (sessionResult.action === "created") {
-        headers["X-Claude-Session-Created"] = "true";
-      }
-
-      if (ignoredParams.length > 0) {
-        headers["X-Claude-Ignored-Params"] = ignoredParams.join(", ");
-      }
-
-      // 11. Return BackendResult
-      return {
-        response: transformed.response,
-        headers,
-      };
     } finally {
-      this.sessionManager.releaseLock(sessionResult.sessionId);
+      this.processPool.release();
     }
   }
 
@@ -248,6 +306,14 @@ export class ClaudeCodeBackend implements CompletionBackend {
       throw err;
     }
 
+    // Acquire pool slot (before session lock)
+    try {
+      await this.processPool.acquire();
+    } catch {
+      callbacks.onError(CAPACITY_EXCEEDED_ERROR);
+      return;
+    }
+
     this.sessionManager.acquireLock(sessionResult.sessionId);
 
     const wrappedCallbacks: BackendStreamCallbacks = {
@@ -280,6 +346,7 @@ export class ClaudeCodeBackend implements CompletionBackend {
       );
     } finally {
       this.sessionManager.releaseLock(sessionResult.sessionId);
+      this.processPool.release();
     }
   }
 
@@ -297,6 +364,8 @@ export class ClaudeCodeBackend implements CompletionBackend {
     promptResult: BuildPromptResult,
   ): Promise<void> {
     try {
+      const useStdin =
+        Buffer.byteLength(promptResult.prompt, "utf8") > STDIN_PROMPT_THRESHOLD;
       const args = buildCliArgs({
         outputFormat: "stream-json",
         prompt: promptResult.prompt,
@@ -305,6 +374,7 @@ export class ClaudeCodeBackend implements CompletionBackend {
         sessionId: context.sessionId!,
         sessionAction: session.action,
         streaming: true,
+        useStdin,
       });
 
       const child = spawn(this.options.cliPath, args, {
@@ -312,9 +382,18 @@ export class ClaudeCodeBackend implements CompletionBackend {
         env: buildSanitizedEnv(),
       });
 
-      // Close stdin immediately — prompt is passed via -p flag, not stdin.
-      // Without this, the CLI may block waiting for stdin to close.
-      child.stdin.end();
+      // Track child in process pool for shutdown management
+      this.processPool.track(child);
+
+      // Per-request timeout: kill child if it runs too long
+      const requestTimer = setTimeout(() => {
+        killWithEscalation(child);
+      }, this.options.requestTimeoutMs);
+      requestTimer.unref();
+
+      // Deliver prompt via stdin for large payloads; otherwise close stdin
+      // immediately so the CLI doesn't block waiting for input.
+      deliverStdin(child.stdin, useStdin ? promptResult.prompt : undefined);
 
       // Wire abort signal for client disconnect cancellation
       const onAbort = () => {
@@ -339,9 +418,17 @@ export class ClaudeCodeBackend implements CompletionBackend {
       });
 
       let stderr = "";
+      let stderrBytes = 0;
+      let stderrLimitHit = false;
       child.stderr.setEncoding("utf8");
       child.stderr.on("data", (chunk: string) => {
         stderr += chunk;
+        stderrBytes += Buffer.byteLength(chunk, "utf8");
+        if (!stderrLimitHit && stderrBytes > MAX_STDERR_SIZE) {
+          stderrLimitHit = true;
+          if (!child.killed) child.kill("SIGTERM");
+          adapter.handleError(STDERR_LIMIT_MSG, callbacks);
+        }
       });
 
       // Handle spawn errors that occur after spawn() succeeds
@@ -360,6 +447,9 @@ export class ClaudeCodeBackend implements CompletionBackend {
 
       await new Promise<void>((resolve) => {
         child.on("close", () => {
+          // Clear per-request timeout on completion
+          clearTimeout(requestTimer);
+
           try {
             // Clean up abort listener to prevent child reference leak
             if (context.signal) {
@@ -373,10 +463,10 @@ export class ClaudeCodeBackend implements CompletionBackend {
             }
 
             if (exitCode !== 0 && exitCode !== null) {
-              const reason = stderr.trim()
-                ? `CLI process exited with code ${exitCode}: ${stderr.trim()}`
-                : `CLI process exited with code ${exitCode}`;
-              adapter.handleError(reason, callbacks);
+              adapter.handleError(
+                formatCliExitReason(exitCode, stderr),
+                callbacks,
+              );
             } else if (exitCode === 0 && !adapter.isDone()) {
               // Normal exit but no result event — fallback onDone
               callbacks.onDone({
@@ -388,9 +478,10 @@ export class ClaudeCodeBackend implements CompletionBackend {
                 },
               });
             }
-          } catch {
-            // Defensive: if callbacks throw, still resolve the promise
-            // to avoid hanging the request.
+          } catch (closeErr: unknown) {
+            process.stderr.write(
+              `[claude-code] stream close error: ${closeErr}\n`,
+            );
           }
 
           resolve();

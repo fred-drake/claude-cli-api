@@ -3,6 +3,7 @@ import type { RequestContext } from "../../src/backends/types.js";
 import { ClaudeCodeBackend } from "../../src/backends/claude-code.js";
 import type { ClaudeCodeOptions } from "../../src/backends/claude-code.js";
 import { SessionManager } from "../../src/services/session-manager.js";
+import { ProcessPool } from "../../src/services/process-pool.js";
 import { ApiError } from "../../src/errors/handler.js";
 import {
   sampleCliResult,
@@ -15,10 +16,23 @@ import {
 vi.mock("../../src/services/claude-cli.js", () => ({
   spawnCli: vi.fn(),
   STDIN_PROMPT_THRESHOLD: 128 * 1024,
+  MAX_STDERR_SIZE: 1 * 1024 * 1024,
 }));
 
 function defaultOptions(): ClaudeCodeOptions {
-  return { cliPath: "/usr/bin/claude", enabled: true };
+  return {
+    cliPath: "/usr/bin/claude",
+    enabled: true,
+    requestTimeoutMs: 300_000,
+  };
+}
+
+function defaultPool(): ProcessPool {
+  return new ProcessPool({
+    maxConcurrent: 10,
+    queueTimeoutMs: 5000,
+    shutdownTimeoutMs: 10_000,
+  });
 }
 
 function defaultSessionManager(): SessionManager {
@@ -44,14 +58,17 @@ function defaultContext(
 
 describe("ClaudeCodeBackend.complete()", () => {
   let sessionManager: SessionManager;
+  let pool: ProcessPool;
 
   beforeEach(() => {
     vi.clearAllMocks();
     sessionManager = defaultSessionManager();
+    pool = defaultPool();
   });
 
   afterEach(() => {
     sessionManager?.destroy();
+    pool?.destroy();
   });
 
   it("happy path: returns OpenAI-format response", async () => {
@@ -64,7 +81,11 @@ describe("ClaudeCodeBackend.complete()", () => {
       exitCode: 0,
     });
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const result = await backend.complete(sampleChatRequest, defaultContext());
 
     expect(result.response.id).toMatch(/^chatcmpl-/);
@@ -95,7 +116,11 @@ describe("ClaudeCodeBackend.complete()", () => {
       exitCode: 0,
     });
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const result = await backend.complete(sampleChatRequest, defaultContext());
 
     expect(result.headers["X-Backend-Mode"]).toBe("claude-code");
@@ -109,7 +134,11 @@ describe("ClaudeCodeBackend.complete()", () => {
       exitCode: 0,
     });
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const result = await backend.complete(sampleChatRequest, defaultContext());
 
     expect(result.headers["X-Claude-Session-ID"]).toBeDefined();
@@ -126,7 +155,11 @@ describe("ClaudeCodeBackend.complete()", () => {
       exitCode: 0,
     });
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const result = await backend.complete(sampleChatRequest, defaultContext());
 
     expect(result.headers["X-Claude-Session-Created"]).toBe("true");
@@ -143,7 +176,11 @@ describe("ClaudeCodeBackend.complete()", () => {
       exitCode: 0,
     });
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const firstResult = await backend.complete(
       sampleChatRequest,
       defaultContext(),
@@ -176,7 +213,11 @@ describe("ClaudeCodeBackend.complete()", () => {
       exitCode: 0,
     });
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const firstResult = await backend.complete(
       sampleChatRequest,
       defaultContext(),
@@ -206,7 +247,11 @@ describe("ClaudeCodeBackend.complete()", () => {
       exitCode: 0,
     });
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
 
     try {
       await backend.complete(sampleChatRequest, defaultContext());
@@ -227,7 +272,11 @@ describe("ClaudeCodeBackend.complete()", () => {
       exitCode: 1,
     });
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
 
     try {
       await backend.complete(sampleChatRequest, defaultContext());
@@ -248,7 +297,11 @@ describe("ClaudeCodeBackend.complete()", () => {
       exitCode: 1,
     });
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
 
     try {
       await backend.complete(sampleChatRequest, defaultContext());
@@ -271,7 +324,11 @@ describe("ClaudeCodeBackend.complete()", () => {
       exitCode: 0,
     });
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
 
     try {
       await backend.complete(sampleChatRequest, defaultContext());
@@ -285,7 +342,11 @@ describe("ClaudeCodeBackend.complete()", () => {
   });
 
   it("rejects Tier 3 param with 400 (before lock)", async () => {
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
 
     const requestWithTools = {
       ...sampleChatRequest,
@@ -304,7 +365,11 @@ describe("ClaudeCodeBackend.complete()", () => {
   });
 
   it("rejects unknown model with 400", async () => {
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
 
     const requestWithBadModel = {
       ...sampleChatRequest,
@@ -330,7 +395,11 @@ describe("ClaudeCodeBackend.complete()", () => {
       exitCode: 0,
     });
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
 
     const requestWithIgnored = {
       ...sampleChatRequest,
@@ -353,7 +422,11 @@ describe("ClaudeCodeBackend.complete()", () => {
       exitCode: 0,
     });
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const result = await backend.complete(sampleChatRequest, defaultContext());
 
     expect(result.headers["X-Claude-Ignored-Params"]).toBeUndefined();
@@ -367,7 +440,11 @@ describe("ClaudeCodeBackend.complete()", () => {
       exitCode: 0,
     });
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const result = await backend.complete(sampleChatRequest, defaultContext());
 
     const sessionId = result.headers["X-Claude-Session-ID"]!;
@@ -384,7 +461,11 @@ describe("ClaudeCodeBackend.complete()", () => {
       exitCode: 0,
     });
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
 
     try {
       await backend.complete(sampleChatRequest, defaultContext());
@@ -414,7 +495,11 @@ describe("ClaudeCodeBackend.complete()", () => {
       exitCode: 0,
     });
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const result = await backend.complete(sampleChatRequest, defaultContext());
 
     // CLI should receive resolved model name
@@ -444,7 +529,11 @@ describe("ClaudeCodeBackend.complete()", () => {
       messages: [{ role: "user" as const, content: bigPrompt }],
     };
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     await backend.complete(bigRequest, defaultContext());
 
     const call = mockSpawnCli.mock.calls[0]![0];
@@ -463,7 +552,11 @@ describe("ClaudeCodeBackend.complete()", () => {
     });
 
     const controller = new AbortController();
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     await backend.complete(
       sampleChatRequest,
       defaultContext({ signal: controller.signal }),
@@ -481,7 +574,11 @@ describe("ClaudeCodeBackend.complete()", () => {
       exitCode: 0,
     });
 
-    const backend = new ClaudeCodeBackend(defaultOptions(), sessionManager);
+    const backend = new ClaudeCodeBackend(
+      defaultOptions(),
+      sessionManager,
+      pool,
+    );
     const result = await backend.complete(sampleChatRequest, defaultContext());
 
     expect(result.response.choices[0]!.message.content).toBe("");
